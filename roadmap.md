@@ -27,7 +27,7 @@ Enhance the single-node capabilities with enterprise security, management utilit
   - [ ] JWT / OIDC / LDAP Integration for console and API auth
   - [ ] RBAC (Role-Based Access Control) authorization policies
 - **Observability**:
-  - [ ] Structured logging (JSON format)
+  - [x] Structured logging (JSON format)
   - [ ] Prometheus metrics endpoint (Request rate, latency, storage utilization, active connections)
   - [x] OpenTelemetry (OTel) tracing integration for API handlers
 - **CLI Client**:

@@ -4,7 +4,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,11 +39,13 @@ func (trw *trackingResponseWriter) WriteHeader(code int) {
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Start OTel tracing
+	startTime := time.Now()
 	parentTrace := r.Header.Get("traceparent")
 	ctx, span := otel.StartSpanWithParent(r.Context(), "S3 "+r.Method+" "+r.URL.Path, 2, parentTrace)
 	trw := &trackingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 	defer func() {
+		duration := time.Since(startTime)
 		status := 1
 		if trw.statusCode >= 400 {
 			status = 2
@@ -52,6 +54,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		span.SetAttribute("http.route", r.URL.Path)
 		span.SetAttribute("http.status_code", trw.statusCode)
 		span.End(status)
+
+		// Log request in structured JSON format
+		slog.Info("Request completed",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status", trw.statusCode),
+			slog.Duration("duration", duration),
+			slog.String("trace_id", span.TraceID),
+		)
 	}()
 
 	r = r.WithContext(ctx)
@@ -161,7 +172,7 @@ func (g *Gateway) writeXML(w http.ResponseWriter, status int, data interface{}) 
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
 	if err := enc.Encode(data); err != nil {
-		log.Printf("Error encoding XML: %v", err)
+		slog.Error("Error encoding XML", "error", err)
 	}
 }
 
