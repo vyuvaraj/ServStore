@@ -84,13 +84,30 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Object level operations
+	query := r.URL.Query()
 	switch r.Method {
 	case http.MethodGet:
 		g.handleGetObject(w, r, bucket, key)
 	case http.MethodPut:
-		g.handlePutObject(w, r, bucket, key)
+		if query.Has("uploadId") && query.Has("partNumber") {
+			g.handleUploadPart(w, r, bucket, key)
+		} else {
+			g.handlePutObject(w, r, bucket, key)
+		}
+	case http.MethodPost:
+		if query.Has("uploads") {
+			g.handleInitiateMultipart(w, r, bucket, key)
+		} else if query.Has("uploadId") {
+			g.handleCompleteMultipart(w, r, bucket, key)
+		} else {
+			g.writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed on object level")
+		}
 	case http.MethodDelete:
-		g.handleDeleteObject(w, r, bucket, key)
+		if query.Has("uploadId") {
+			g.handleAbortMultipart(w, r, bucket, key)
+		} else {
+			g.handleDeleteObject(w, r, bucket, key)
+		}
 	case http.MethodHead:
 		g.handleHeadObject(w, r, bucket, key)
 	default:
@@ -495,5 +512,100 @@ func (g *Gateway) handleDeleteObject(w http.ResponseWriter, r *http.Request, buc
 	if obj.VersionID != "" && obj.VersionID != "null" {
 		w.Header().Set("x-amz-version-id", obj.VersionID)
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Gateway) handleInitiateMultipart(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	uploadID, err := g.store.InitiateMultipartUpload(r.Context(), bucket, key)
+	if err != nil {
+		if errors.Is(err, storage.ErrBucketNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	res := InitiateMultipartUploadResult{
+		Xmlns:    xmlNamespace,
+		Bucket:   bucket,
+		Key:      key,
+		UploadId: uploadID,
+	}
+
+	g.writeXML(w, http.StatusOK, res)
+}
+
+func (g *Gateway) handleUploadPart(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	query := r.URL.Query()
+	uploadID := query.Get("uploadId")
+	partNumberStr := query.Get("partNumber")
+
+	partNumber, err := strconv.Atoi(partNumberStr)
+	if err != nil || partNumber <= 0 {
+		g.writeError(w, http.StatusBadRequest, "InvalidArgument", "Part number must be a positive integer.")
+		return
+	}
+
+	etag, err := g.store.UploadPart(r.Context(), bucket, key, uploadID, partNumber, r.Body, r.ContentLength)
+	if err != nil {
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	w.Header().Set("ETag", `"`+etag+`"`)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (g *Gateway) handleCompleteMultipart(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	uploadID := r.URL.Query().Get("uploadId")
+
+	var req CompleteMultipartUpload
+	decoder := xml.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil {
+		g.writeError(w, http.StatusBadRequest, "MalformedXML", "XML body is malformed.")
+		return
+	}
+
+	var parts []storage.PartInfo
+	for _, p := range req.Parts {
+		cleanETag := strings.Trim(p.ETag, `"`)
+		parts = append(parts, storage.PartInfo{
+			PartNumber: p.PartNumber,
+			ETag:       cleanETag,
+		})
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	obj, err := g.store.CompleteMultipartUpload(r.Context(), bucket, key, uploadID, parts, contentType)
+	if err != nil {
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	res := CompleteMultipartUploadResult{
+		Xmlns:    xmlNamespace,
+		Location: "/" + bucket + "/" + key,
+		Bucket:   bucket,
+		Key:      key,
+		ETag:     `"` + obj.ETag + `"`,
+	}
+
+	g.writeXML(w, http.StatusOK, res)
+}
+
+func (g *Gateway) handleAbortMultipart(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	uploadID := r.URL.Query().Get("uploadId")
+
+	err := g.store.AbortMultipartUpload(r.Context(), bucket, key, uploadID)
+	if err != nil {
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }

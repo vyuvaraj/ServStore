@@ -718,3 +718,186 @@ func (s *LocalStore) ListObjectVersions(ctx context.Context, bucket, prefix, del
 	sort.Strings(commonPrefixes)
 	return versions, commonPrefixes, nil
 }
+
+func (s *LocalStore) getMultipartUploadDir(bucket, uploadID string) string {
+	return filepath.Join(s.getBucketDir(bucket), ".uploads", uploadID)
+}
+
+func (s *LocalStore) getPartPath(bucket, uploadID string, partNumber int) string {
+	return filepath.Join(s.getMultipartUploadDir(bucket, uploadID), fmt.Sprintf("%d", partNumber))
+}
+
+func (s *LocalStore) InitiateMultipartUpload(ctx context.Context, bucket, key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return "", err
+	}
+
+	uploadID := generateUUID()
+	uploadDir := s.getMultipartUploadDir(bucket, uploadID)
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return "", err
+	}
+
+	return uploadID, nil
+}
+
+func (s *LocalStore) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, reader io.Reader, size int64) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return "", err
+	}
+
+	uploadDir := s.getMultipartUploadDir(bucket, uploadID)
+	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+		return "", fmt.Errorf("upload id not found")
+	}
+
+	partPath := s.getPartPath(bucket, uploadID, partNumber)
+	file, err := os.Create(partPath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hasher := md5.New()
+	mw := io.MultiWriter(file, hasher)
+
+	written, err := io.Copy(mw, reader)
+	if err != nil {
+		return "", err
+	}
+	if size > 0 && written != size {
+		return "", fmt.Errorf("size mismatch for part: expected %d, got %d", size, written)
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func (s *LocalStore) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []PartInfo, contentType string) (*ObjectVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	uploadDir := s.getMultipartUploadDir(bucket, uploadID)
+	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("upload id not found")
+	}
+
+	// Prepare version ID
+	var versionID string
+	if b.Versioning == "Enabled" {
+		versionID = generateUUID()
+	} else {
+		versionID = "null"
+	}
+
+	// Create output data file
+	dataPath := s.getObjectDataPath(bucket, key, versionID)
+	if err := os.MkdirAll(filepath.Dir(dataPath), 0755); err != nil {
+		return nil, err
+	}
+
+	outFile, err := os.Create(dataPath)
+	if err != nil {
+		return nil, err
+	}
+	defer outFile.Close()
+
+	hasher := md5.New()
+	mw := io.MultiWriter(outFile, hasher)
+
+	var totalSize int64
+	for _, part := range parts {
+		partPath := s.getPartPath(bucket, uploadID, part.PartNumber)
+		partFile, err := os.Open(partPath)
+		if err != nil {
+			return nil, fmt.Errorf("missing or invalid part %d: %w", part.PartNumber, err)
+		}
+		
+		written, err := io.Copy(mw, partFile)
+		partFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		totalSize += written
+	}
+
+	etag := hex.EncodeToString(hasher.Sum(nil))
+
+	// Cleanup upload parts folder
+	_ = os.RemoveAll(uploadDir)
+
+	// Read existing metadata or create new
+	om, err := s.readObjectMeta(bucket, key)
+	if err != nil {
+		if errors.Is(err, ErrObjectNotFound) {
+			om = &ObjectMeta{Key: key, Versions: []ObjectVersion{}}
+		} else {
+			return nil, err
+		}
+	}
+
+	now := time.Now()
+	newVer := ObjectVersion{
+		VersionID:      versionID,
+		Key:            key,
+		Size:           totalSize,
+		LastModified:   now,
+		ETag:           etag,
+		ContentType:    contentType,
+		IsLatest:       true,
+		IsDeleteMarker: false,
+	}
+
+	// Adjust existing versions: IsLatest must be set to false for other versions
+	for i := range om.Versions {
+		if b.Versioning == "Enabled" {
+			om.Versions[i].IsLatest = false
+		} else {
+			if om.Versions[i].VersionID == "null" {
+				oldDataPath := s.getObjectDataPath(bucket, key, "null")
+				if oldDataPath != dataPath {
+					_ = os.Remove(oldDataPath)
+				}
+				om.Versions = append(om.Versions[:i], om.Versions[i+1:]...)
+				break
+			}
+		}
+	}
+
+	for i := range om.Versions {
+		om.Versions[i].IsLatest = false
+	}
+
+	om.Versions = append([]ObjectVersion{newVer}, om.Versions...)
+
+	if err := s.writeObjectMeta(bucket, key, om); err != nil {
+		return nil, err
+	}
+
+	return &newVer, nil
+}
+
+func (s *LocalStore) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return err
+	}
+
+	uploadDir := s.getMultipartUploadDir(bucket, uploadID)
+	return os.RemoveAll(uploadDir)
+}

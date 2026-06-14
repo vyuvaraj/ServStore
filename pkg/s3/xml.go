@@ -94,3 +94,30 @@ type VersioningConfiguration struct {
 	Xmlns   string   `xml:"xmlns,attr"`
 	Status  string   `xml:"Status,omitempty"` // "Enabled" or "Suspended"
 }
+
+type InitiateMultipartUploadResult struct {
+	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
+	Xmlns    string   `xml:"xmlns,attr"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	UploadId string   `xml:"UploadId"`
+}
+
+type CompleteMultipartUpload struct {
+	XMLName xml.Name           `xml:"CompleteMultipartUpload"`
+	Parts   []CompletePartInfo `xml:"Part"`
+}
+
+type CompletePartInfo struct {
+	PartNumber int    `xml:"PartNumber"`
+	ETag       string `xml:"ETag"`
+}
+
+type CompleteMultipartUploadResult struct {
+	XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
+	Xmlns    string   `xml:"xmlns,attr"`
+	Location string   `xml:"Location"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	ETag     string   `xml:"ETag"`
+}

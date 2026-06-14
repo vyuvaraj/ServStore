@@ -189,3 +189,100 @@ func TestLocalStore(t *testing.T) {
 		t.Fatalf("expected latest version to be %s, got %s", ver2.VersionID, getLatest.VersionID)
 	}
 }
+
+func TestMultipartUpload(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "servstore-multipart-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := NewLocalStore(tempDir)
+	if err != nil {
+		t.Fatalf("failed to initialize store: %v", err)
+	}
+
+	ctx := context.Background()
+	bucketName := "multi-bucket"
+	err = store.CreateBucket(ctx, bucketName)
+	if err != nil {
+		t.Fatalf("failed to create bucket: %v", err)
+	}
+
+	// 1. Initiate
+	uploadID, err := store.InitiateMultipartUpload(ctx, bucketName, "large-file")
+	if err != nil {
+		t.Fatalf("failed to initiate: %v", err)
+	}
+	if uploadID == "" {
+		t.Fatalf("expected non-empty upload ID")
+	}
+
+	// 2. Upload parts
+	part1 := []byte("hello ")
+	etag1, err := store.UploadPart(ctx, bucketName, "large-file", uploadID, 1, bytes.NewReader(part1), int64(len(part1)))
+	if err != nil {
+		t.Fatalf("failed to upload part 1: %v", err)
+	}
+
+	part2 := []byte("world from multipart!")
+	etag2, err := store.UploadPart(ctx, bucketName, "large-file", uploadID, 2, bytes.NewReader(part2), int64(len(part2)))
+	if err != nil {
+		t.Fatalf("failed to upload part 2: %v", err)
+	}
+
+	// 3. Complete
+	parts := []PartInfo{
+		{PartNumber: 1, ETag: etag1},
+		{PartNumber: 2, ETag: etag2},
+	}
+	ver, err := store.CompleteMultipartUpload(ctx, bucketName, "large-file", uploadID, parts, "text/plain")
+	if err != nil {
+		t.Fatalf("failed to complete multipart: %v", err)
+	}
+
+	// Verify size and ETag
+	expectedSize := int64(len(part1) + len(part2))
+	if ver.Size != expectedSize {
+		t.Fatalf("expected size %d, got %d", expectedSize, ver.Size)
+	}
+
+	// 4. Retrieve content
+	reader, _, err := store.GetObject(ctx, bucketName, "large-file", "")
+	if err != nil {
+		t.Fatalf("failed to get object: %v", err)
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("failed to read complete data: %v", err)
+	}
+	expectedData := "hello world from multipart!"
+	if string(data) != expectedData {
+		t.Fatalf("expected data %q, got %q", expectedData, string(data))
+	}
+
+	// 5. Test Abort
+	uploadID2, err := store.InitiateMultipartUpload(ctx, bucketName, "abort-file")
+	if err != nil {
+		t.Fatalf("failed to initiate abort test: %v", err)
+	}
+
+	_, err = store.UploadPart(ctx, bucketName, "abort-file", uploadID2, 1, bytes.NewReader([]byte("test")), 4)
+	if err != nil {
+		t.Fatalf("failed to upload part for abort: %v", err)
+	}
+
+	err = store.AbortMultipartUpload(ctx, bucketName, "abort-file", uploadID2)
+	if err != nil {
+		t.Fatalf("failed to abort: %v", err)
+	}
+
+	// Verify upload folder is gone
+	uploadDir := store.getMultipartUploadDir(bucketName, uploadID2)
+	if _, err := os.Stat(uploadDir); !os.IsNotExist(err) {
+		t.Fatalf("expected upload directory to be deleted")
+	}
+}
+

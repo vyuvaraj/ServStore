@@ -36,6 +36,11 @@ type Bucket struct {
 	Versioning  string    `json:"versioning"` // "Enabled", "Suspended", "Disabled"
 }
 
+type PartInfo struct {
+	PartNumber int    `xml:"PartNumber" json:"part_number"`
+	ETag       string `xml:"ETag" json:"etag"`
+}
+
 type StorageEngine interface {
 	CreateBucket(ctx context.Context, bucket string) error
 	DeleteBucket(ctx context.Context, bucket string) error
@@ -49,4 +54,9 @@ type StorageEngine interface {
 	HeadObject(ctx context.Context, bucket, key, versionID string) (*ObjectVersion, error)
 	ListObjects(ctx context.Context, bucket, prefix, delimiter, marker string, maxKeys int) ([]*ObjectVersion, []string, error)
 	ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) ([]*ObjectVersion, []string, error)
+
+	InitiateMultipartUpload(ctx context.Context, bucket, key string) (string, error)
+	UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, reader io.Reader, size int64) (string, error)
+	CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []PartInfo, contentType string) (*ObjectVersion, error)
+	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 }
