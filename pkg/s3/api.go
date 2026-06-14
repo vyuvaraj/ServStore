@@ -697,8 +697,16 @@ func (g *Gateway) replicateObjectToNode(ctx context.Context, bucket, key string,
 
 func (g *Gateway) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	versionID := r.URL.Query().Get("versionId")
+	atParam := r.URL.Query().Get("at")
 
-	reader, obj, err := g.store.GetObject(r.Context(), bucket, key, versionID)
+	ctx := r.Context()
+	if atParam != "" {
+		if t, err := time.Parse(time.RFC3339, atParam); err == nil {
+			ctx = context.WithValue(ctx, storage.TimeTravelContextKey, t)
+		}
+	}
+
+	reader, obj, err := g.store.GetObject(ctx, bucket, key, versionID)
 	
 	// If the reader is an integrityCheckingReader, we can read/verify it fully before writing headers,
 	// or we can read it to a buffer so we can catch integrity errors before sending HTTP headers.
@@ -776,8 +784,16 @@ func (g *Gateway) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 
 func (g *Gateway) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	versionID := r.URL.Query().Get("versionId")
+	atParam := r.URL.Query().Get("at")
 
-	obj, err := g.store.HeadObject(r.Context(), bucket, key, versionID)
+	ctx := r.Context()
+	if atParam != "" {
+		if t, err := time.Parse(time.RFC3339, atParam); err == nil {
+			ctx = context.WithValue(ctx, storage.TimeTravelContextKey, t)
+		}
+	}
+
+	obj, err := g.store.HeadObject(ctx, bucket, key, versionID)
 	if err != nil {
 		if (errors.Is(err, storage.ErrObjectNotFound) || errors.Is(err, storage.ErrBucketNotFound)) && g.cluster != nil && r.Header.Get("X-ServStore-Replicated") != "true" {
 			ring := g.cluster.Ring()

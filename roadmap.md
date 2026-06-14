@@ -68,7 +68,7 @@ Bring ServStore to high-scale production and Kubernetes environments.
 Pioneer a new class of intelligent object storage by fusing S3 with vector indexing, time travel query semantics, and serverless sandboxed computing.
 - **AI & Intelligent Querying**:
   - [x] Content Addressing: Enable storage/retrieval via content hashing (`store.put(content)`) to support deduplication and Git-like addressing
-  - [ ] Time Travel: Query historical versions of objects at specific points in time (`bucket.at("timestamp")`) using existing version metadata
+  - [x] Time Travel: Query historical versions of objects at specific points in time (`bucket.at("timestamp")`) using existing version metadata
   - [ ] Semantic Search: Built-in local embedding generation (ONNX runtime / local models) and vector search interface (`GET /bucket/object?query=semantic`) to retrieve objects semantically
   - [ ] Auto-Embedding Pipeline: Automatically index documents (PDFs, text) and generate vector representations upon upload
 - **Compute Near Data**:

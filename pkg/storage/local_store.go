@@ -451,22 +451,37 @@ func (s *LocalStore) GetObject(ctx context.Context, bucket, key, versionID strin
 	}
 
 	var targetVer *ObjectVersion
-	if versionID == "" {
-		// Find latest version
-		for i := range om.Versions {
-			if om.Versions[i].IsLatest {
-				targetVer = &om.Versions[i]
-				break
+	if timeVal := ctx.Value(TimeTravelContextKey); timeVal != nil {
+		if t, ok := timeVal.(time.Time); ok {
+			// Find the latest version active at or before time t
+			// Note: om.Versions is sorted newest first. So we scan from oldest (end of slice) to newest (start of slice)
+			// to find the last one created before/at t.
+			for i := len(om.Versions) - 1; i >= 0; i-- {
+				if om.Versions[i].LastModified.Before(t) || om.Versions[i].LastModified.Equal(t) {
+					targetVer = &om.Versions[i]
+				}
 			}
 		}
-		if targetVer == nil && len(om.Versions) > 0 {
-			targetVer = &om.Versions[0]
-		}
-	} else {
-		for i := range om.Versions {
-			if om.Versions[i].VersionID == versionID {
-				targetVer = &om.Versions[i]
-				break
+	}
+
+	if targetVer == nil {
+		if versionID == "" {
+			// Find latest version
+			for i := range om.Versions {
+				if om.Versions[i].IsLatest {
+					targetVer = &om.Versions[i]
+					break
+				}
+			}
+			if targetVer == nil && len(om.Versions) > 0 {
+				targetVer = &om.Versions[0]
+			}
+		} else {
+			for i := range om.Versions {
+				if om.Versions[i].VersionID == versionID {
+					targetVer = &om.Versions[i]
+					break
+				}
 			}
 		}
 	}
@@ -558,21 +573,33 @@ func (s *LocalStore) HeadObject(ctx context.Context, bucket, key, versionID stri
 	}
 
 	var targetVer *ObjectVersion
-	if versionID == "" {
-		for i := range om.Versions {
-			if om.Versions[i].IsLatest {
-				targetVer = &om.Versions[i]
-				break
+	if timeVal := ctx.Value(TimeTravelContextKey); timeVal != nil {
+		if t, ok := timeVal.(time.Time); ok {
+			for i := len(om.Versions) - 1; i >= 0; i-- {
+				if om.Versions[i].LastModified.Before(t) || om.Versions[i].LastModified.Equal(t) {
+					targetVer = &om.Versions[i]
+				}
 			}
 		}
-		if targetVer == nil && len(om.Versions) > 0 {
-			targetVer = &om.Versions[0]
-		}
-	} else {
-		for i := range om.Versions {
-			if om.Versions[i].VersionID == versionID {
-				targetVer = &om.Versions[i]
-				break
+	}
+
+	if targetVer == nil {
+		if versionID == "" {
+			for i := range om.Versions {
+				if om.Versions[i].IsLatest {
+					targetVer = &om.Versions[i]
+					break
+				}
+			}
+			if targetVer == nil && len(om.Versions) > 0 {
+				targetVer = &om.Versions[0]
+			}
+		} else {
+			for i := range om.Versions {
+				if om.Versions[i].VersionID == versionID {
+					targetVer = &om.Versions[i]
+					break
+				}
 			}
 		}
 	}

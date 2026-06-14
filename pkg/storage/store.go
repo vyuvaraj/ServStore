@@ -95,5 +95,6 @@ type LocalKey struct {
 
 type ContextKey string
 const VersionIDContextKey ContextKey = "versionID"
+const TimeTravelContextKey ContextKey = "timeTravel"
 
 
