@@ -45,7 +45,7 @@ Graduate from single-node to a consistent, fault-tolerant distributed system.
 - **Data Protection & Storage Reliability**:
   - [x] Peer-to-peer data replication
   - [x] Erasure Coding (e.g. Reed-Solomon) to minimize storage overhead while preserving fault tolerance
-  - [ ] End-to-end data integrity validation using BLAKE3 checksums
+  - [x] End-to-end data integrity validation using BLAKE3 checksums
 
 ---
 
