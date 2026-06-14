@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"servstore/pkg/auth"
+	"servstore/pkg/metrics"
 	"servstore/pkg/otel"
 	"servstore/pkg/storage"
 )
@@ -38,6 +39,15 @@ func (trw *trackingResponseWriter) WriteHeader(code int) {
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Intercept Prometheus metrics endpoint
+	if r.URL.Path == "/metrics" && r.Method == http.MethodGet {
+		metrics.Handler().ServeHTTP(w, r)
+		return
+	}
+
+	// Update HTTP metrics
+	metrics.IncInFlight()
+
 	// Start OTel tracing
 	startTime := time.Now()
 	parentTrace := r.Header.Get("traceparent")
@@ -45,6 +55,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trw := &trackingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 	defer func() {
+		metrics.DecInFlight()
 		duration := time.Since(startTime)
 		status := 1
 		if trw.statusCode >= 400 {
@@ -54,6 +65,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		span.SetAttribute("http.route", r.URL.Path)
 		span.SetAttribute("http.status_code", trw.statusCode)
 		span.End(status)
+
+		// Record HTTP metrics
+		metrics.IncHTTPRequests(r.Method, r.URL.Path, strconv.Itoa(trw.statusCode))
+		metrics.ObserveRequestDuration(r.Method, r.URL.Path, duration)
 
 		// Log request in structured JSON format
 		slog.Info("Request completed",

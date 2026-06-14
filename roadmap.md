@@ -28,7 +28,7 @@ Enhance the single-node capabilities with enterprise security, management utilit
   - [ ] RBAC (Role-Based Access Control) authorization policies
 - **Observability**:
   - [x] Structured logging (JSON format)
-  - [ ] Prometheus metrics endpoint (Request rate, latency, storage utilization, active connections)
+  - [x] Prometheus metrics endpoint (Request rate, latency, storage utilization, active connections)
   - [x] OpenTelemetry (OTel) tracing integration for API handlers
 - **CLI Client**:
   - [ ] A lightweight Go CLI (`servstore-cli`) to manage buckets, objects, policy configurations, and cluster state from the terminal
