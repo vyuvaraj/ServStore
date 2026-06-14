@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"servstore/pkg/auth"
@@ -23,20 +25,42 @@ import (
 )
 
 type Gateway struct {
-	store    storage.StorageEngine
-	auth     *auth.AuthProvider
-	raftNode *cluster.RaftNode
-	cluster  *cluster.MembershipManager
+	store             storage.StorageEngine
+	auth              *auth.AuthProvider
+	raftNode          *cluster.RaftNode
+	cluster           *cluster.MembershipManager
+	replicationFactor int
 }
 
-func NewGateway(store storage.StorageEngine, auth *auth.AuthProvider, raftNode *cluster.RaftNode, clusterMgr *cluster.MembershipManager) *Gateway {
+func NewGateway(store storage.StorageEngine, auth *auth.AuthProvider, raftNode *cluster.RaftNode, clusterMgr *cluster.MembershipManager, replicationFactor int) *Gateway {
+	if replicationFactor <= 0 {
+		replicationFactor = 2
+	}
 	return &Gateway{
-		store:    store,
-		auth:     auth,
-		raftNode: raftNode,
-		cluster:  clusterMgr,
+		store:             store,
+		auth:              auth,
+		raftNode:          raftNode,
+		cluster:           clusterMgr,
+		replicationFactor: replicationFactor,
 	}
 }
+
+func (g *Gateway) Store() storage.StorageEngine {
+	return g.store
+}
+
+func (g *Gateway) Cluster() *cluster.MembershipManager {
+	return g.cluster
+}
+
+func (g *Gateway) ReplicationFactor() int {
+	return g.replicationFactor
+}
+
+func (g *Gateway) Auth() *auth.AuthProvider {
+	return g.auth
+}
+
 
 type trackingResponseWriter struct {
 	http.ResponseWriter
@@ -119,19 +143,35 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Parse bucket and key
 	bucket, key := parsePath(r.URL.Path)
 
-	if bucket != "" && key != "" {
+	if bucket != "" && key != "" && r.Header.Get("X-ServStore-Replicated") != "true" {
 		if g.cluster != nil {
 			ring := g.cluster.Ring()
 			if ring != nil {
-				owners, err := ring.GetNodes(bucket+"/"+key, 1)
+				owners, err := ring.GetNodes(bucket+"/"+key, g.replicationFactor)
 				if err == nil && len(owners) > 0 {
-					owner := owners[0]
-					if owner != g.cluster.LocalNodeID() {
-						if addr, exists := g.cluster.GetNodeAddress(owner); exists {
-							slog.Info("Proxying request to owner node", "bucket", bucket, "key", key, "owner", owner, "addr", addr)
-							g.proxyRequest(w, r, addr)
+					var targetOwner string
+					var targetAddr string
+					for _, owner := range owners {
+						if g.cluster.IsNodeOnline(owner) {
+							targetOwner = owner
+							addr, exists := g.cluster.GetNodeAddress(owner)
+							if exists {
+								targetAddr = addr
+								break
+							}
+						}
+					}
+
+					if targetOwner != "" {
+						if targetOwner != g.cluster.LocalNodeID() {
+							slog.Info("Proxying request to online owner node", "bucket", bucket, "key", key, "owner", targetOwner, "addr", targetAddr)
+							g.proxyRequest(w, r, targetAddr)
 							return
 						}
+						// Local node is the first online owner, fall through
+					} else {
+						g.writeError(w, http.StatusServiceUnavailable, "ServiceUnavailable", "All replica nodes for this object are offline")
+						return
 					}
 				}
 			}
@@ -507,7 +547,12 @@ func (g *Gateway) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		contentType = "application/octet-stream"
 	}
 
-	obj, err := g.store.PutObject(r.Context(), bucket, key, r.Body, size, contentType)
+	ctx := r.Context()
+	if headerVer := r.Header.Get("X-ServStore-Version-Id"); headerVer != "" {
+		ctx = context.WithValue(ctx, storage.VersionIDContextKey, headerVer)
+	}
+
+	obj, err := g.store.PutObject(ctx, bucket, key, r.Body, size, contentType)
 	if err != nil {
 		if errors.Is(err, storage.ErrBucketNotFound) {
 			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
@@ -517,6 +562,37 @@ func (g *Gateway) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
+	// Replicate to backup nodes if this is a primary request and clustering is active
+	if g.cluster != nil && r.Header.Get("X-ServStore-Replicated") != "true" {
+		ring := g.cluster.Ring()
+		if ring != nil {
+			owners, err := ring.GetNodes(bucket+"/"+key, g.replicationFactor)
+			if err == nil && len(owners) > 1 {
+				var wg sync.WaitGroup
+				for _, owner := range owners {
+					if owner == g.cluster.LocalNodeID() {
+						continue // skip local node
+					}
+					addr, exists := g.cluster.GetNodeAddress(owner)
+					if !exists {
+						continue
+					}
+					wg.Add(1)
+					go func(nodeAddr string) {
+						defer wg.Done()
+						err := g.replicateObjectToNode(r.Context(), bucket, key, obj, nodeAddr)
+						if err != nil {
+							slog.Error("Failed to replicate object to backup node", "node", nodeAddr, "bucket", bucket, "key", key, "error", err)
+						} else {
+							slog.Info("Successfully replicated object to backup node", "node", nodeAddr, "bucket", bucket, "key", key)
+						}
+					}(addr)
+				}
+				wg.Wait()
+			}
+		}
+	}
+
 	w.Header().Set("ETag", `"`+obj.ETag+`"`)
 	if obj.VersionID != "" && obj.VersionID != "null" {
 		w.Header().Set("x-amz-version-id", obj.VersionID)
@@ -524,11 +600,71 @@ func (g *Gateway) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	w.WriteHeader(http.StatusOK)
 }
 
+func (g *Gateway) replicateObjectToNode(ctx context.Context, bucket, key string, obj *storage.ObjectVersion, addr string) error {
+	reader, _, err := g.store.GetObject(ctx, bucket, key, obj.VersionID)
+	if err != nil {
+		return fmt.Errorf("read local object: %w", err)
+	}
+	defer reader.Close()
+
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		addr = "http://" + addr
+	}
+	targetURL := fmt.Sprintf("%s/%s/%s", strings.TrimSuffix(addr, "/"), bucket, key)
+	req, err := http.NewRequestWithContext(ctx, "PUT", targetURL, reader)
+	if err != nil {
+		return err
+	}
+	req.ContentLength = obj.Size
+	req.Header.Set("Content-Type", obj.ContentType)
+	req.Header.Set("X-ServStore-Replicated", "true")
+	req.Header.Set("X-ServStore-Version-Id", obj.VersionID)
+
+	// Set credentials
+	accessKey, secretKey := g.auth.GetAdminCredentials()
+	req.SetBasicAuth(accessKey, secretKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("remote node returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 func (g *Gateway) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	versionID := r.URL.Query().Get("versionId")
 
 	reader, obj, err := g.store.GetObject(r.Context(), bucket, key, versionID)
 	if err != nil {
+		if (errors.Is(err, storage.ErrObjectNotFound) || errors.Is(err, storage.ErrBucketNotFound)) && g.cluster != nil && r.Header.Get("X-ServStore-Replicated") != "true" {
+			ring := g.cluster.Ring()
+			if ring != nil {
+				owners, ringErr := ring.GetNodes(bucket+"/"+key, g.replicationFactor)
+				if ringErr == nil {
+					for _, owner := range owners {
+						if owner == g.cluster.LocalNodeID() {
+							continue
+						}
+						if g.cluster.IsNodeOnline(owner) {
+							addr, exists := g.cluster.GetNodeAddress(owner)
+							if exists {
+								slog.Info("Local key missing, proxying read to online backup node", "bucket", bucket, "key", key, "backup", owner)
+								g.proxyRequest(w, r, addr)
+								return
+							}
+						}
+					}
+				}
+			}
+		}
+
 		if errors.Is(err, storage.ErrBucketNotFound) {
 			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
 			return
@@ -565,6 +701,28 @@ func (g *Gateway) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 
 	obj, err := g.store.HeadObject(r.Context(), bucket, key, versionID)
 	if err != nil {
+		if (errors.Is(err, storage.ErrObjectNotFound) || errors.Is(err, storage.ErrBucketNotFound)) && g.cluster != nil && r.Header.Get("X-ServStore-Replicated") != "true" {
+			ring := g.cluster.Ring()
+			if ring != nil {
+				owners, ringErr := ring.GetNodes(bucket+"/"+key, g.replicationFactor)
+				if ringErr == nil {
+					for _, owner := range owners {
+						if owner == g.cluster.LocalNodeID() {
+							continue
+						}
+						if g.cluster.IsNodeOnline(owner) {
+							addr, exists := g.cluster.GetNodeAddress(owner)
+							if exists {
+								slog.Info("Local key missing, proxying head to online backup node", "bucket", bucket, "key", key, "backup", owner)
+								g.proxyRequest(w, r, addr)
+								return
+							}
+						}
+					}
+				}
+			}
+		}
+
 		if errors.Is(err, storage.ErrBucketNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -617,6 +775,35 @@ func (g *Gateway) handleDeleteObject(w http.ResponseWriter, r *http.Request, buc
 		return
 	}
 
+	// Replicate DELETE to backup nodes
+	if g.cluster != nil && r.Header.Get("X-ServStore-Replicated") != "true" {
+		ring := g.cluster.Ring()
+		if ring != nil {
+			owners, err := ring.GetNodes(bucket+"/"+key, g.replicationFactor)
+			if err == nil && len(owners) > 1 {
+				var wg sync.WaitGroup
+				for _, owner := range owners {
+					if owner == g.cluster.LocalNodeID() {
+						continue
+					}
+					addr, exists := g.cluster.GetNodeAddress(owner)
+					if !exists {
+						continue
+					}
+					wg.Add(1)
+					go func(nodeAddr string) {
+						defer wg.Done()
+						err := g.replicateDeleteToNode(r.Context(), bucket, key, versionID, nodeAddr)
+						if err != nil {
+							slog.Error("Failed to replicate delete to backup node", "node", nodeAddr, "bucket", bucket, "key", key, "error", err)
+						}
+					}(addr)
+				}
+				wg.Wait()
+			}
+		}
+	}
+
 	if obj.IsDeleteMarker {
 		w.Header().Set("x-amz-delete-marker", "true")
 	}
@@ -624,6 +811,38 @@ func (g *Gateway) handleDeleteObject(w http.ResponseWriter, r *http.Request, buc
 		w.Header().Set("x-amz-version-id", obj.VersionID)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Gateway) replicateDeleteToNode(ctx context.Context, bucket, key, versionID string, addr string) error {
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		addr = "http://" + addr
+	}
+	targetURL := fmt.Sprintf("%s/%s/%s", strings.TrimSuffix(addr, "/"), bucket, key)
+	if versionID != "" {
+		targetURL += "?versionId=" + versionID
+	}
+	req, err := http.NewRequestWithContext(ctx, "DELETE", targetURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-ServStore-Replicated", "true")
+
+	// Set credentials
+	accessKey, secretKey := g.auth.GetAdminCredentials()
+	req.SetBasicAuth(accessKey, secretKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("remote node returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 func (g *Gateway) handleInitiateMultipart(w http.ResponseWriter, r *http.Request, bucket, key string) {

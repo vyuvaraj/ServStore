@@ -132,6 +132,20 @@ func (mm *MembershipManager) LocalNodeID() string {
 	return mm.localNode.NodeID
 }
 
+func (mm *MembershipManager) IsNodeOnline(nodeID string) bool {
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+
+	if mm.localNode.NodeID == nodeID {
+		return mm.localNode.Status == "online"
+	}
+	if peer, exists := mm.peers[nodeID]; exists {
+		return peer.Status == "online"
+	}
+	return false
+}
+
+
 
 // MergeGossip processes incoming gossip payload and returns local state to sender.
 func (mm *MembershipManager) MergeGossip(payload GossipPayload) GossipPayload {

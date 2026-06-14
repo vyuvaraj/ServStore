@@ -255,7 +255,9 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 
 	// Prepare version ID
 	var versionID string
-	if b.Versioning == "Enabled" {
+	if val := ctx.Value(VersionIDContextKey); val != nil {
+		versionID = val.(string)
+	} else if b.Versioning == "Enabled" {
 		versionID = generateUUID()
 	} else {
 		versionID = "null"
@@ -1262,3 +1264,48 @@ func (s *LocalStore) DeleteUserPolicy(ctx context.Context, username string) erro
 	}
 	return nil
 }
+
+func (s *LocalStore) ListLocalKeys(ctx context.Context) ([]LocalKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var keys []LocalKey
+	entries, err := os.ReadDir(s.rootDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		bucketName := entry.Name()
+		if bucketName == "policies" || strings.HasPrefix(bucketName, ".") {
+			continue
+		}
+		metaDir := filepath.Join(s.rootDir, bucketName, ".metadata")
+		if _, err := os.Stat(metaDir); os.IsNotExist(err) {
+			continue
+		}
+		err = filepath.Walk(metaDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
+				rel, err := filepath.Rel(metaDir, path)
+				if err != nil {
+					return err
+				}
+				key := strings.TrimSuffix(rel, ".json")
+				key = filepath.ToSlash(key)
+				keys = append(keys, LocalKey{Bucket: bucketName, Key: key})
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
+}
+

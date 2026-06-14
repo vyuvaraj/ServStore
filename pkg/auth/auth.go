@@ -474,3 +474,11 @@ func shouldEscape(c byte) bool {
 	}
 	return true
 }
+
+func (ap *AuthProvider) GetAdminCredentials() (string, string) {
+	for k, v := range ap.credentials {
+		return k, v
+	}
+	return "minioadmin", "minioadmin"
+}
+

@@ -81,4 +81,16 @@ type StorageEngine interface {
 	PutUserPolicy(ctx context.Context, username string, policy []byte) error
 	GetUserPolicy(ctx context.Context, username string) ([]byte, error)
 	DeleteUserPolicy(ctx context.Context, username string) error
+
+	ListLocalKeys(ctx context.Context) ([]LocalKey, error)
 }
+
+type LocalKey struct {
+	Bucket string
+	Key    string
+}
+
+type ContextKey string
+const VersionIDContextKey ContextKey = "versionID"
+
+

@@ -41,9 +41,9 @@ Graduate from single-node to a consistent, fault-tolerant distributed system.
   - [x] Cluster Membership (Gossip protocol or static configuration discovery)
   - [x] Raft Consensus Engine (For consistent metadata storage across nodes)
   - [x] Data Placement: Consistent Hashing or CRUSH-style placement algorithm
-  - [ ] Auto-healing (Background detection of offline drives/nodes and automatic rebuilds)
+  - [x] Auto-healing (Background detection of offline drives/nodes and automatic rebuilds)
 - **Data Protection & Storage Reliability**:
-  - [ ] Peer-to-peer data replication
+  - [x] Peer-to-peer data replication
   - [ ] Erasure Coding (e.g. Reed-Solomon) to minimize storage overhead while preserving fault tolerance
   - [ ] End-to-end data integrity validation using BLAKE3 checksums
 
