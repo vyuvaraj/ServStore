@@ -17,7 +17,7 @@ ServStore is a **production-grade distributed object storage engine** written in
 
 | Property | Detail |
 |---|---|
-| **Author** | [vyuvaraj](https://github.com/vyuvaraj) |
+| **Author** | [yuvaraj](https://github.com/vyuvaraj) |
 | **Language** | Go 1.22+ |
 | **License** | Apache 2.0 |
 | **S3 API** | AWS S3 REST compatible (Signature V4) |
