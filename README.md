@@ -59,8 +59,19 @@ ServStore/
 ├── cmd/
 │   ├── servstore/
 │   │   └── main.go                   # Server entry point, CLI flags, TLS & encryption config
-│   └── servstore-cli/
-│       └── main.go                   # CLI client (mb, rb, ls, put, get, rm, policy)
+│   ├── servstore-cli/
+│   │   └── main.go                   # CLI client (mb, rb, ls, put, get, rm, policy)
+│   ├── operator/
+│   │   └── main.go                   # Kubernetes Operator Manager binary
+│   └── csi-driver/
+│       └── main.go                   # CSI Node Plugin gRPC stub
+├── deploy/
+│   ├── crds/                         # Kubernetes Custom Resource Definitions (CRDs)
+│   │   ├── servstorebucket.yaml
+│   │   ├── servstorecluster.yaml
+│   │   └── servstorecredential.yaml
+│   └── helm/
+│       └── servstore/                # Kubernetes Helm Chart for Cluster & Operator
 ├── pkg/
 │   ├── auth/
 │   │   └── auth.go                   # AWS Signature V4 authentication + JWT/OIDC/LDAP
@@ -75,9 +86,20 @@ ServStore/
 │   ├── metrics/
 │   │   ├── metrics.go                # Zero-dependency Prometheus metrics registry
 │   │   └── metrics_test.go           # Unit tests for metrics serialisation
+│   ├── operator/
+│   │   ├── register.go               # Scheme registration for CRDs
+│   │   ├── types.go                  # Go spec and status structures for CRDs
+│   │   └── controllers/
+│   │       ├── cluster_controller.go # StatefulSet & Rolling Upgrade reconciler
+│   │       ├── bucket_controller.go  # S3 bucket configuration reconciler
+│   │       ├── credential_controller.go # Secret to S3 policy mapping reconciler
+│   │       └── operator_test.go      # Operator unit tests
 │   ├── otel/
 │   │   ├── otel.go                   # Lightweight OpenTelemetry tracing client
 │   │   └── otel_test.go              # Unit tests for OTel tracing
+│   ├── ratelimit/
+│   │   ├── limiter.go                # Tenant-isolated token-bucket rate limiter
+│   │   └── limiter_test.go           # Limiter unit tests
 │   ├── s3/
 │   │   ├── api.go                    # S3 API router, gateway handlers & failover routing
 │   │   ├── xml.go                    # S3-compliant XML request/response models
