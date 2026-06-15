@@ -130,3 +130,23 @@ func main() {
 		t.Error("expected memory-limit error, got nil")
 	}
 }
+
+func TestExecute_ServLangWASM(t *testing.T) {
+	wasmPath := "../../../Serv-lang/test_wasm.wasm"
+	wasmBytes, err := os.ReadFile(wasmPath)
+	if err != nil {
+		t.Skip("test_wasm.wasm not compiled, compile first using serv build")
+	}
+
+	ctx := context.Background()
+	input := []byte("hello serv-lang wasm transform")
+	output, err := wasm.Execute(ctx, wasmBytes, input, 64, 30)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	expected := "WASM_TRANSFORMED: hello serv-lang wasm transform"
+	if string(output) != expected {
+		t.Errorf("expected %q, got %q", expected, string(output))
+	}
+}

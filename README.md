@@ -50,6 +50,7 @@ A cloud-native, distributed, AI-native, S3-compatible object storage engine. Ser
 * **Single-Binary Deployment**: Frontend web console assets are embedded directly into the compiled Go binary. Zero file dependencies at runtime.
 * **Web Console**: Premium glassmorphic dark-mode admin UI with drag-and-drop uploads, bucket management, versioning controls, and object version history viewer.
 * **ServStore CLI (`servstore-cli`)**: Terminal client supporting `mb`, `rb`, `ls`, `put`, `get`, `rm`, `policy`, and cluster management commands against any ServStore endpoint.
+* **serv-lang Native Client**: Out-of-the-box integration with the [serv-lang](file:///f:/Don/Serv/Serv-lang) DSL standard library (`stdlib/s3.srv`), supporting bucket creation, versioning, CRUD, time travel, and semantic search.
 
 ---
 

@@ -755,6 +755,8 @@ func (g *Gateway) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	if atParam != "" {
 		if t, err := time.Parse(time.RFC3339, atParam); err == nil {
 			ctx = context.WithValue(ctx, storage.TimeTravelContextKey, t)
+		} else {
+			slog.Warn("Failed to parse time travel parameter", "at", atParam, "error", err)
 		}
 	}
 

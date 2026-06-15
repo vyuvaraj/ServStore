@@ -89,3 +89,16 @@ Ensure production readiness through rigorous validation, resiliency checks, and 
   - [x] Direct I/O and Zero-Copy: Optimize storage engine pipelines to bypass OS page cache where appropriate for maximum disk throughput
   - [x] Multi-threaded Hashing: Parallelize BLAKE3 checksum hashing for multi-gigabyte payload streams
 
+---
+
+## Phase 7: Serv-verse & Next-Gen Storage Enhancements (Proposed)
+Transition ServStore into a high-capacity, metadata-optimized cluster integrated with the broader Serv ecosystem.
+- **Next-Gen Storage Core**:
+  - [ ] **LSM-Tree Metadata Engine**: Replace basic Raft state machine file logging with a structured LSM-tree key-value store (e.g. Pebble) for sub-millisecond metadata operations at scale.
+  - [ ] **HNSW Vector Indexing**: Upgrade TF-IDF to a true HNSW vector index using local ONNX embeddings for advanced semantic search queries.
+- **Compute Transform Enhancements**:
+  - [ ] **Transform Pipeline DAG Engine**: Support execution of server-side WASM transform pipelines linked in a Directed Acyclic Graph (DAG) flow.
+- **Ecosystem Integration (Serv-verse)**:
+  - [ ] **Unified Management Console (ServConsole)**: Establish a single glassmorphic dashboard visualizing cluster metrics, OTel traces, rate limits, and replication state.
+  - [ ] **serv-lang Native Tooling**: Optimize client libraries and add compiler-level support for native S3 pipeline configuration.
+
