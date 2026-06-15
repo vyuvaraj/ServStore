@@ -1,8 +1,31 @@
 # ServStore
 
-A cloud-native, distributed, AI-native, S3-compatible object storage engine. ServStore is an open-source alternative to MinIO — designed for strong consistency, high scalability, high performance, and intelligent data access.
+[![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Build](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/vyuvaraj/ServStore)
+[![S3 Compatible](https://img.shields.io/badge/S3-Compatible-FF9900?logo=amazon-s3&logoColor=white)](https://github.com/vyuvaraj/ServStore)
+[![WASM](https://img.shields.io/badge/WASM-Compute--Near--Data-654FF0?logo=webassembly&logoColor=white)](https://github.com/vyuvaraj/ServStore)
 
-**Phase 5 complete.** ServStore now combines a production-grade distributed storage engine with a full AI-native layer: semantic search, time travel queries, serverless compute-near-data (WASM), and hybrid cloud cold-storage tiering.
+> A cloud-native, distributed, AI-native, S3-compatible object storage engine.  
+> ServStore is an open-source alternative to MinIO — built for strong consistency, high scalability, and intelligent data access.
+
+---
+
+## About
+
+ServStore is a **production-grade distributed object storage engine** written in pure Go. It was designed to be a self-hostable, cloud-native alternative to MinIO and AWS S3 — while going further with an AI-native storage layer that brings semantic search, time travel queries, and serverless compute-near-data directly into the storage engine.
+
+| Property | Detail |
+|---|---|
+| **Author** | [vyuvaraj](https://github.com/vyuvaraj) |
+| **Language** | Go 1.22+ |
+| **License** | Apache 2.0 |
+| **S3 API** | AWS S3 REST compatible (Signature V4) |
+| **Consensus** | Raft-based strong consistency |
+| **WASM Runtime** | wazero (pure-Go, zero-CGO) |
+| **Status** | Phases 1–6 complete ✅ |
+
+ServStore now combines a production-grade distributed storage engine with a full AI-native layer: semantic search, time travel queries, serverless compute-near-data (WASM), and hybrid cloud cold-storage tiering.
 
 ---
 
@@ -300,7 +323,55 @@ When processing large objects (>8MB), ServStore automatically parallelizes BLAKE
 
 ---
 
+
 ## Roadmap
 
 See [roadmap.md](roadmap.md) for the full phase-by-phase implementation plan. **All Phases 1–6 are now 100% complete and fully verified.**
 
+---
+
+## Contributing
+
+Contributions are welcome! Here's how to get started:
+
+1. **Fork** the repository and create a feature branch:
+   ```bash
+   git checkout -b feature/my-feature
+   ```
+2. **Make your changes** — follow Go conventions, add tests for new functionality.
+3. **Run the tests** before submitting:
+   ```bash
+   go test ./...
+   ```
+4. **Open a Pull Request** against the `main` branch with a clear description of what you changed and why.
+
+Please open an [issue](https://github.com/vyuvaraj/ServStore/issues) first for major feature proposals so we can discuss the design before implementation begins.
+
+### Code Style
+- Standard Go formatting (`gofmt` / `goimports`)
+- All exported identifiers must have doc comments
+- New packages must include at least one `_test.go` file
+
+---
+
+## License
+
+Copyright © 2024 [vyuvaraj](https://github.com/vyuvaraj)
+
+Licensed under the **Apache License, Version 2.0**. You may not use this project except in compliance with the License.
+
+A copy of the license is included in this repository: [LICENSE](LICENSE)
+
+```
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+```
+
+---
+
+<p align="center">
+  Built with ❤️ in Go · <a href="https://github.com/vyuvaraj/ServStore">github.com/vyuvaraj/ServStore</a>
+</p>
