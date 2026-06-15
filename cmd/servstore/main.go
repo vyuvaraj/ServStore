@@ -15,6 +15,7 @@ import (
 	"servstore/pkg/auth"
 	"servstore/pkg/cluster"
 	"servstore/pkg/otel"
+	"servstore/pkg/ratelimit"
 	"servstore/pkg/s3"
 	"servstore/pkg/storage"
 	"servstore/pkg/web"
@@ -49,6 +50,8 @@ func main() {
 	erasureCoding := flag.Bool("erasure-coding", false, "Enable Reed-Solomon Erasure Coding instead of replication")
 	dataShards := flag.Int("data-shards", 2, "Number of data shards for Erasure Coding")
 	parityShards := flag.Int("parity-shards", 1, "Number of parity shards for Erasure Coding")
+	rateLimitRPS := flag.Int("rate-limit-rps", 0, "Max requests per second per tenant namespace (0 = unlimited)")
+	rateLimitBurst := flag.Int("rate-limit-burst", 0, "Token bucket burst size for rate limiting (defaults to 2×rps when 0)")
 	flag.Parse()
 
 	// Initialize OpenTelemetry Tracing (inspired by serv-lang)
@@ -149,6 +152,16 @@ func main() {
 
 	// Create S3 Gateway
 	gateway := s3.NewGateway(store, authProvider, raftNode, clusterMgr, *replicationFactor, *erasureCoding, *dataShards, *parityShards)
+
+	// Attach rate limiter if configured
+	if *rateLimitRPS > 0 {
+		burst := *rateLimitBurst
+		if burst <= 0 {
+			burst = (*rateLimitRPS) * 2
+		}
+		gateway.WithRateLimiter(ratelimit.NewLimiter(*rateLimitRPS, burst))
+		slog.Info("Rate limiting enabled", "rps", *rateLimitRPS, "burst", burst)
+	}
 
 	if clusterMgr != nil && !*erasureCoding {
 		healer := cluster.NewHealingManager(store, clusterMgr, *replicationFactor, *accessKey, *secretKey)

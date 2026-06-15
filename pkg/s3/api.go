@@ -25,6 +25,7 @@ import (
 	"servstore/pkg/cluster"
 	"servstore/pkg/metrics"
 	"servstore/pkg/otel"
+	"servstore/pkg/ratelimit"
 	"servstore/pkg/storage"
 )
 
@@ -38,6 +39,7 @@ type Gateway struct {
 	dataShards        int
 	parityShards      int
 	crrMgr            *cluster.CRRManager
+	rateLimiter       *ratelimit.Limiter // nil = unlimited
 }
 
 func NewGateway(store storage.StorageEngine, auth *auth.AuthProvider, raftNode *cluster.RaftNode, clusterMgr *cluster.MembershipManager, replicationFactor int, erasureEnabled bool, dataShards, parityShards int) *Gateway {
@@ -64,6 +66,14 @@ func NewGateway(store storage.StorageEngine, auth *auth.AuthProvider, raftNode *
 
 func (g *Gateway) WithCRR(crrMgr *cluster.CRRManager) *Gateway {
 	g.crrMgr = crrMgr
+	return g
+}
+
+// WithRateLimiter attaches a per-tenant token-bucket rate limiter to the gateway.
+// Requests that exceed the limit receive 429 Too Many Requests with a Retry-After header.
+// Tenant is identified by the X-ServStore-Namespace request header (falls back to "default").
+func (g *Gateway) WithRateLimiter(l *ratelimit.Limiter) *Gateway {
+	g.rateLimiter = l
 	return g
 }
 
@@ -160,6 +170,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.checkAuthorization(r) {
 		g.writeError(w, http.StatusForbidden, "AccessDenied", "Access Denied by RBAC Policy")
 		return
+	}
+
+	// Rate limiting — checked after auth so unauthenticated requests fail fast
+	if g.rateLimiter != nil {
+		tenant := r.Header.Get("X-ServStore-Namespace")
+		if tenant == "" {
+			tenant = "default"
+		}
+		if !g.rateLimiter.Allow(tenant) {
+			retryAfter := g.rateLimiter.RetryAfterSec(tenant)
+			w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+			g.writeError(w, http.StatusTooManyRequests, "SlowDown", "Request rate limit exceeded. Please retry after "+strconv.FormatInt(retryAfter, 10)+"s.")
+			return
+		}
 	}
 
 	// Parse bucket and key

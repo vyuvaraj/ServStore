@@ -224,4 +224,4 @@ aws s3api get-object --bucket mybucket --key archived.bin /tmp/out.bin --endpoin
 
 ## Roadmap
 
-See [roadmap.md](roadmap.md) for the full phase-by-phase implementation plan. **Phases 1–5 are complete.** Phase 6 (Enterprise Hardening) and the Phase 4 Kubernetes Operator are next.
+See [roadmap.md](roadmap.md) for the full phase-by-phase implementation plan. **Phases 1–5 are now fully complete.** Phase 6 (Enterprise Hardening) is the final phase.

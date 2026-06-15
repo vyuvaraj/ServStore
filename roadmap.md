@@ -55,12 +55,12 @@ Bring ServStore to high-scale production and Kubernetes environments.
   - [x] Horizontal scalability (Adding nodes dynamically to increase storage capacity and throughput)
   - [x] Multi-region replication and active-active clustering
 - **Kubernetes Operator**:
-  - [ ] ServStore Kubernetes Operator for orchestration
-  - [ ] Custom Resource Definitions (CRDs) for clusters, buckets, and access credentials
-  - [ ] Helm charts for easy packaging and deployment
-  - [ ] Orchestration of zero-downtime rolling upgrades of clusters
-  - [ ] CSI (Container Storage Interface) Plugin support to expose ServStore buckets as persistent storage volumes
-  - [ ] Dynamic Traffic Flow Control & Rate Limiting per namespace/tenant
+  - [x] ServStore Kubernetes Operator for orchestration
+  - [x] Custom Resource Definitions (CRDs) for clusters, buckets, and access credentials
+  - [x] Helm charts for easy packaging and deployment
+  - [x] Orchestration of zero-downtime rolling upgrades of clusters
+  - [x] CSI (Container Storage Interface) Plugin support to expose ServStore buckets as persistent storage volumes
+  - [x] Dynamic Traffic Flow Control & Rate Limiting per namespace/tenant
 
 ---
 
