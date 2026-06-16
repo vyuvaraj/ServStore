@@ -48,6 +48,14 @@ func NewLocalStore(rootDir string) (*LocalStore, error) {
 		return nil, fmt.Errorf("failed to open pebble db: %w", err)
 	}
 
+	// Try to initialize ONNX if environment variables are provided
+	onnxLib := os.Getenv("SERVSTORE_ONNX_LIB")
+	onnxModel := os.Getenv("SERVSTORE_ONNX_MODEL")
+	onnxVocab := os.Getenv("SERVSTORE_ONNX_VOCAB")
+	if onnxLib != "" && onnxModel != "" {
+		_ = InitializeONNX(onnxLib, onnxModel, onnxVocab)
+	}
+
 	return &LocalStore{
 		rootDir:     absPath,
 		pebbleDB:    db,

@@ -10,6 +10,7 @@ require (
 	github.com/hashicorp/raft v1.7.3
 	github.com/klauspost/reedsolomon v1.14.0
 	github.com/tetratelabs/wazero v1.12.0
+	github.com/yalue/onnxruntime_go v1.31.0
 	github.com/zeebo/blake3 v0.2.4
 	google.golang.org/grpc v1.81.1
 	k8s.io/api v0.31.4

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -63,8 +64,28 @@ func fnv1a(s string) uint32 {
 	return h
 }
 
-// GenerateEmbedding maps text into a normalized 128-dimensional dense vector
+// Global hooks for ONNX implementation. If CGO is enabled,
+// vector_onnx.go will register these hooks in its init() block.
+var (
+	onnxInitFunc func(string, string, string) error
+	onnxEvalFunc func(string) ([]float64, error)
+)
+
+// GenerateEmbedding maps text into a normalized dense vector.
+// If ONNX is loaded successfully, it returns a 384-dimensional semantic embedding.
+// Otherwise, it falls back to a 128-dimensional unigram/bigram hashing trick embedding.
 func GenerateEmbedding(text string) []float64 {
+	if onnxEvalFunc != nil {
+		vec, err := onnxEvalFunc(text)
+		if err == nil {
+			return vec
+		}
+	}
+	return GenerateFallbackEmbedding(text)
+}
+
+// GenerateFallbackEmbedding maps text into a normalized 128-dimensional dense vector
+func GenerateFallbackEmbedding(text string) []float64 {
 	tokens := Tokenize(text)
 	D := 128
 	vec := make([]float64, D)
@@ -134,3 +155,11 @@ func CosineDistance(v1, v2 []float64) float64 {
 	return 1.0 - CosineSimilarityDense(v1, v2)
 }
 
+// InitializeONNX initializes the ONNX runtime shared library and model.
+// If CGO is disabled or registration hooks are missing, it returns a descriptive error.
+func InitializeONNX(sharedLibPath, modelPath, vocabPath string) error {
+	if onnxInitFunc == nil {
+		return fmt.Errorf("ONNX embeddings not supported in this build (requires CGO)")
+	}
+	return onnxInitFunc(sharedLibPath, modelPath, vocabPath)
+}
