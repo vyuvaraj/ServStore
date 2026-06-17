@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,10 @@ type AuthProvider struct {
 func NewAuthProvider(accessKey, secretKey string, enabled bool) *AuthProvider {
 	creds := make(map[string]string)
 	var jwtSec []byte
-	if accessKey != "" && secretKey != "" {
+	if shared := os.Getenv("SERV_JWT_SECRET"); shared != "" {
+		h := sha256.Sum256([]byte(shared))
+		jwtSec = h[:]
+	} else if accessKey != "" && secretKey != "" {
 		creds[accessKey] = secretKey
 		// Derive a JWT signing key from the secret key so sessions persist across restarts
 		h := sha256.Sum256([]byte(secretKey))
