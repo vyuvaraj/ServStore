@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-stomp/stomp/v3"
 	"github.com/klauspost/reedsolomon"
 	"servstore/pkg/auth"
 	"servstore/pkg/cluster"
@@ -31,17 +32,32 @@ import (
 )
 
 type Gateway struct {
-	store             storage.StorageEngine
-	auth              *auth.AuthProvider
-	raftNode          *cluster.RaftNode
-	cluster           *cluster.MembershipManager
-	replicationFactor int
-	erasureEnabled    bool
-	dataShards        int
-	parityShards      int
-	crrMgr            *cluster.CRRManager
-	rateLimiter       *ratelimit.Limiter // nil = unlimited
+	store                  storage.StorageEngine
+	auth                   *auth.AuthProvider
+	raftNode               *cluster.RaftNode
+	cluster                *cluster.MembershipManager
+	replicationFactor      int
+	erasureEnabled         bool
+	dataShards             int
+	parityShards           int
+	crrMgr                 *cluster.CRRManager
+	rateLimiter            *ratelimit.Limiter // nil = unlimited
+	notificationWebhook    string
+	notificationStompAddr  string
+	notificationStompTopic string
 }
+
+func (g *Gateway) WithNotificationWebhook(url string) *Gateway {
+	g.notificationWebhook = url
+	return g
+}
+
+func (g *Gateway) WithNotificationStomp(addr, topic string) *Gateway {
+	g.notificationStompAddr = addr
+	g.notificationStompTopic = topic
+	return g
+}
+
 
 func NewGateway(store storage.StorageEngine, auth *auth.AuthProvider, raftNode *cluster.RaftNode, clusterMgr *cluster.MembershipManager, replicationFactor int, erasureEnabled bool, dataShards, parityShards int) *Gateway {
 	if replicationFactor <= 0 {
@@ -709,6 +725,7 @@ func (g *Gateway) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	if obj.VersionID != "" && obj.VersionID != "null" {
 		w.Header().Set("x-amz-version-id", obj.VersionID)
 	}
+	g.notifyEvent("ObjectCreated:Put", bucket, key, obj.Size, obj.ETag)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -971,6 +988,7 @@ func (g *Gateway) handleDeleteObject(w http.ResponseWriter, r *http.Request, buc
 	if obj.VersionID != "" && obj.VersionID != "null" {
 		w.Header().Set("x-amz-version-id", obj.VersionID)
 	}
+	g.notifyEvent("ObjectRemoved:Delete", bucket, key, obj.Size, obj.ETag)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1938,3 +1956,57 @@ func (g *Gateway) handleWASMPipeline(w http.ResponseWriter, r *http.Request, buc
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(result)
 }
+
+func (g *Gateway) notifyEvent(eventName, bucket, key string, size int64, etag string) {
+	if g.notificationWebhook == "" && g.notificationStompAddr == "" {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"event":     eventName,
+		"bucket":    bucket,
+		"key":       key,
+		"size":      size,
+		"etag":      etag,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		slog.Error("Failed to marshal notification event payload", "error", err)
+		return
+	}
+
+	// Dispatch webhook in a goroutine
+	if g.notificationWebhook != "" {
+		go func(url string, body []byte) {
+			resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+			if err != nil {
+				slog.Error("Failed to dispatch event notification to webhook", "url", url, "error", err)
+				return
+			}
+			resp.Body.Close()
+			slog.Info("Successfully dispatched event notification to webhook", "url", url, "event", eventName)
+		}(g.notificationWebhook, jsonBytes)
+	}
+
+	// Dispatch to STOMP queue in a goroutine
+	if g.notificationStompAddr != "" {
+		go func(addr, topic string, body []byte) {
+			conn, err := stomp.Dial("tcp", addr)
+			if err != nil {
+				slog.Error("Failed to connect to STOMP broker for event notification", "addr", addr, "error", err)
+				return
+			}
+			defer conn.Disconnect()
+
+			err = conn.Send(topic, "application/json", body)
+			if err != nil {
+				slog.Error("Failed to send STOMP event notification", "topic", topic, "error", err)
+				return
+			}
+			slog.Info("Successfully dispatched event notification to STOMP topic", "topic", topic, "event", eventName)
+		}(g.notificationStompAddr, g.notificationStompTopic, jsonBytes)
+	}
+}
+

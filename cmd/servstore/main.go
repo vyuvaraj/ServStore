@@ -54,6 +54,9 @@ func main() {
 	parityShards := flag.Int("parity-shards", 1, "Number of parity shards for Erasure Coding")
 	rateLimitRPS := flag.Int("rate-limit-rps", 0, "Max requests per second per tenant namespace (0 = unlimited)")
 	rateLimitBurst := flag.Int("rate-limit-burst", 0, "Token bucket burst size for rate limiting (defaults to 2×rps when 0)")
+	notificationWebhook := flag.String("notification-webhook", "", "Webhook URL to send event notifications")
+	notificationStompAddr := flag.String("notification-stomp-addr", "", "STOMP broker address for event notifications (e.g., localhost:61613)")
+	notificationStompTopic := flag.String("notification-stomp-topic", "/topic/bucket-events", "STOMP topic name for event notifications")
 	flag.Parse()
 
 	// Initialize OpenTelemetry Tracing (inspired by serv-lang)
@@ -154,6 +157,15 @@ func main() {
 
 	// Create S3 Gateway
 	gateway := s3.NewGateway(store, authProvider, raftNode, clusterMgr, *replicationFactor, *erasureCoding, *dataShards, *parityShards)
+
+	if *notificationWebhook != "" {
+		gateway.WithNotificationWebhook(*notificationWebhook)
+		slog.Info("Event notifications enabled via Webhook", "url", *notificationWebhook)
+	}
+	if *notificationStompAddr != "" {
+		gateway.WithNotificationStomp(*notificationStompAddr, *notificationStompTopic)
+		slog.Info("Event notifications enabled via STOMP", "addr", *notificationStompAddr, "topic", *notificationStompTopic)
+	}
 
 	// Attach rate limiter if configured
 	if *rateLimitRPS > 0 {

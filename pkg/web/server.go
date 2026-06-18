@@ -56,6 +56,18 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"healthy"}`))
 		return
 	}
+
+	if strings.HasPrefix(path, "/api/v1/") {
+		suffix := strings.TrimPrefix(path, "/api/v1/")
+		if suffix == "schema" || suffix == "metrics" || suffix == "traces" || suffix == "presign" {
+			path = "/console/" + suffix
+		} else if strings.HasPrefix(suffix, "cluster/") {
+			path = "/console/cluster/" + strings.TrimPrefix(suffix, "cluster/")
+		} else if strings.HasPrefix(suffix, "users/") {
+			path = "/console/users/" + strings.TrimPrefix(suffix, "users/")
+		}
+	}
+
 	accept := r.Header.Get("Accept")
 
 	// 1. Handle auth endpoints
@@ -82,13 +94,13 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Password string `json:"password"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad Request", http.StatusBadRequest)
+			WriteJSONError(w, r, "Bad Request", "ERR_BAD_REQUEST", http.StatusBadRequest)
 			return
 		}
 
 		token, err := wc.auth.AuthenticateConsole(req.Username, req.Password)
 		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			WriteJSONError(w, r, "Unauthorized", "ERR_UNAUTHORIZED", http.StatusUnauthorized)
 			return
 		}
 
@@ -127,13 +139,13 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			authURL, err := oidc.GetAuthURL(state)
 			if err != nil {
-				http.Error(w, "OIDC auth URL generation failed: "+err.Error(), http.StatusInternalServerError)
+				WriteJSONError(w, r, "OIDC auth URL generation failed: "+err.Error(), "ERR_OIDC_AUTH_URL_FAILED", http.StatusInternalServerError)
 				return
 			}
 			http.Redirect(w, r, authURL, http.StatusFound)
 			return
 		}
-		http.Error(w, "OIDC not configured", http.StatusBadRequest)
+		WriteJSONError(w, r, "OIDC not configured", "ERR_OIDC_NOT_CONFIGURED", http.StatusBadRequest)
 		return
 	}
 
@@ -142,7 +154,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Verify state
 			stateCookie, err := r.Cookie("oidc_state")
 			if err != nil || stateCookie.Value == "" || stateCookie.Value != r.URL.Query().Get("state") {
-				http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+				WriteJSONError(w, r, "Invalid state parameter", "ERR_INVALID_STATE", http.StatusBadRequest)
 				return
 			}
 
@@ -156,19 +168,19 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			code := r.URL.Query().Get("code")
 			if code == "" {
-				http.Error(w, "Missing code parameter", http.StatusBadRequest)
+				WriteJSONError(w, r, "Missing code parameter", "ERR_MISSING_CODE", http.StatusBadRequest)
 				return
 			}
 
 			tokenResp, err := oidc.ExchangeCode(code)
 			if err != nil {
-				http.Error(w, "Token exchange failed: "+err.Error(), http.StatusInternalServerError)
+				WriteJSONError(w, r, "Token exchange failed: "+err.Error(), "ERR_TOKEN_EXCHANGE_FAILED", http.StatusInternalServerError)
 				return
 			}
 
 			userInfo, err := oidc.GetUserInfo(tokenResp.AccessToken)
 			if err != nil {
-				http.Error(w, "Failed to fetch user info: "+err.Error(), http.StatusInternalServerError)
+				WriteJSONError(w, r, "Failed to fetch user info: "+err.Error(), "ERR_USER_INFO_FAILED", http.StatusInternalServerError)
 				return
 			}
 
@@ -190,7 +202,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			jwtToken, err := auth.GenerateToken(claims, wc.auth.JWTSecret())
 			if err != nil {
-				http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+				WriteJSONError(w, r, "Failed to generate token", "ERR_TOKEN_GENERATION_FAILED", http.StatusInternalServerError)
 				return
 			}
 
@@ -208,14 +220,14 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
-		http.Error(w, "OIDC not configured", http.StatusBadRequest)
+		WriteJSONError(w, r, "OIDC not configured", "ERR_OIDC_NOT_CONFIGURED", http.StatusBadRequest)
 		return
 	}
 
 	if path == "/console/cluster/gossip" && r.Method == http.MethodPost {
 		var payload cluster.GossipPayload
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			http.Error(w, "Bad Request", http.StatusBadRequest)
+			WriteJSONError(w, r, "Bad Request", "ERR_BAD_REQUEST", http.StatusBadRequest)
 			return
 		}
 		if wc.cluster != nil {
@@ -224,7 +236,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(reply)
 			return
 		}
-		http.Error(w, "Cluster not enabled", http.StatusServiceUnavailable)
+		WriteJSONError(w, r, "Cluster not enabled", "ERR_CLUSTER_NOT_ENABLED", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -235,7 +247,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Region  string `json:"region"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad Request", http.StatusBadRequest)
+			WriteJSONError(w, r, "Bad Request", "ERR_BAD_REQUEST", http.StatusBadRequest)
 			return
 		}
 		// If membership manager is active, register/gossip this new node
@@ -254,7 +266,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if wc.raftNode != nil {
 			if err := wc.raftNode.Join(req.NodeID, req.Address); err != nil {
-				http.Error(w, "Join failed: "+err.Error(), http.StatusInternalServerError)
+				WriteJSONError(w, r, "Join failed: "+err.Error(), "ERR_RAFT_JOIN_FAILED", http.StatusInternalServerError)
 				return
 			}
 			w.WriteHeader(http.StatusOK)
@@ -264,7 +276,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		http.Error(w, "Cluster not enabled", http.StatusServiceUnavailable)
+		WriteJSONError(w, r, "Cluster not enabled", "ERR_CLUSTER_NOT_ENABLED", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -296,7 +308,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, "/login.html", http.StatusFound)
 				return
 			}
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			WriteJSONError(w, r, "Unauthorized", "ERR_UNAUTHORIZED", http.StatusUnauthorized)
 			return
 		}
 
@@ -316,7 +328,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Expires int    `json:"expires"` // seconds
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			WriteJSONError(w, r, "Invalid request body", "ERR_INVALID_REQUEST_BODY", http.StatusBadRequest)
 			return
 		}
 		if req.Method == "" {
@@ -336,7 +348,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
 		url, err := wc.auth.GeneratePresignedURL(baseURL, req.Method, req.Bucket, req.Key, time.Duration(req.Expires)*time.Second)
 		if err != nil {
-			http.Error(w, "Failed to generate presigned URL", http.StatusInternalServerError)
+			WriteJSONError(w, r, "Failed to generate presigned URL", "ERR_PRESIGNED_URL_FAILED", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -386,7 +398,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			bucket := r.URL.Query().Get("bucket")
 			key := r.URL.Query().Get("key")
 			if bucket == "" || key == "" {
-				http.Error(w, `{"error":"Missing bucket or key parameter"}`, http.StatusBadRequest)
+				WriteJSONError(w, r, "Missing bucket or key parameter", "ERR_MISSING_PARAMETER", http.StatusBadRequest)
 				return
 			}
 			owners, err := wc.cluster.Ring().GetNodes(bucket+"/"+key, 1)
@@ -395,7 +407,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					errMsg = err.Error()
 				}
-				http.Error(w, fmt.Sprintf(`{"error":%q}`, errMsg), http.StatusInternalServerError)
+				WriteJSONError(w, r, errMsg, "ERR_PLACEMENT_LOOKUP_FAILED", http.StatusInternalServerError)
 				return
 			}
 			owner := owners[0]
@@ -408,7 +420,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			json.NewEncoder(w).Encode(res)
 		} else {
-			http.Error(w, `{"error":"Cluster not enabled"}`, http.StatusServiceUnavailable)
+			WriteJSONError(w, r, "Cluster not enabled", "ERR_CLUSTER_NOT_ENABLED", http.StatusServiceUnavailable)
 		}
 		return
 	}
@@ -417,16 +429,16 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case http.MethodPost:
 			service := r.URL.Query().Get("service")
 			if service == "" {
-				http.Error(w, `{"error":"Missing service parameter"}`, http.StatusBadRequest)
+				WriteJSONError(w, r, "Missing service parameter", "ERR_MISSING_PARAMETER", http.StatusBadRequest)
 				return
 			}
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
-				http.Error(w, "Bad Request", http.StatusBadRequest)
+				WriteJSONError(w, r, "Bad Request", "ERR_BAD_REQUEST", http.StatusBadRequest)
 				return
 			}
 			if err := wc.store.PutSchema(r.Context(), service, body); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				WriteJSONError(w, r, err.Error(), "ERR_SCHEMA_PUT_FAILED", http.StatusInternalServerError)
 				return
 			}
 			w.WriteHeader(http.StatusOK)
@@ -438,10 +450,10 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				data, err := wc.store.GetSchema(r.Context(), service)
 				if err != nil {
 					if os.IsNotExist(err) {
-						http.Error(w, `{"error":"Schema not found"}`, http.StatusNotFound)
+						WriteJSONError(w, r, "Schema not found", "ERR_SCHEMA_NOT_FOUND", http.StatusNotFound)
 						return
 					}
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					WriteJSONError(w, r, err.Error(), "ERR_SCHEMA_GET_FAILED", http.StatusInternalServerError)
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -450,7 +462,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			schemas, err := wc.store.ListSchemas(r.Context())
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				WriteJSONError(w, r, err.Error(), "ERR_SCHEMA_LIST_FAILED", http.StatusInternalServerError)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -466,7 +478,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(res)
 			return
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			WriteJSONError(w, r, "Method not allowed", "ERR_METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
 			return
 		}
 	}
@@ -484,7 +496,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						w.Write([]byte(`{"Statement":[]}`))
 						return
 					}
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					WriteJSONError(w, r, err.Error(), "ERR_POLICY_GET_FAILED", http.StatusInternalServerError)
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -493,17 +505,17 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case http.MethodPut:
 				body, err := io.ReadAll(r.Body)
 				if err != nil {
-					http.Error(w, "Bad Request", http.StatusBadRequest)
+					WriteJSONError(w, r, "Bad Request", "ERR_BAD_REQUEST", http.StatusBadRequest)
 					return
 				}
 				var p auth.Policy
 				if err := json.Unmarshal(body, &p); err != nil {
-					http.Error(w, "Invalid policy JSON: "+err.Error(), http.StatusBadRequest)
+					WriteJSONError(w, r, "Invalid policy JSON: "+err.Error(), "ERR_INVALID_POLICY", http.StatusBadRequest)
 					return
 				}
 				if wc.raftNode != nil {
 					if !wc.raftNode.IsLeader() {
-						http.Error(w, "Not Raft leader. Propose to: "+wc.raftNode.LeaderAddr(), http.StatusBadRequest)
+						WriteJSONError(w, r, "Not Raft leader. Propose to: "+wc.raftNode.LeaderAddr(), "ERR_NOT_LEADER", http.StatusBadRequest)
 						return
 					}
 					cmd := cluster.MetadataCommand{
@@ -512,12 +524,12 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						Value:   body,
 					}
 					if err := wc.raftNode.Propose(cmd); err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
+						WriteJSONError(w, r, err.Error(), "ERR_RAFT_PROPOSE_FAILED", http.StatusInternalServerError)
 						return
 					}
 				} else {
 					if err := wc.store.PutUserPolicy(r.Context(), username, body); err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
+						WriteJSONError(w, r, err.Error(), "ERR_POLICY_PUT_FAILED", http.StatusInternalServerError)
 						return
 					}
 				}
@@ -526,7 +538,7 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case http.MethodDelete:
 				if wc.raftNode != nil {
 					if !wc.raftNode.IsLeader() {
-						http.Error(w, "Not Raft leader. Propose to: "+wc.raftNode.LeaderAddr(), http.StatusBadRequest)
+						WriteJSONError(w, r, "Not Raft leader. Propose to: "+wc.raftNode.LeaderAddr(), "ERR_NOT_LEADER", http.StatusBadRequest)
 						return
 					}
 					cmd := cluster.MetadataCommand{
@@ -534,12 +546,12 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						KeyName: username,
 					}
 					if err := wc.raftNode.Propose(cmd); err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
+						WriteJSONError(w, r, err.Error(), "ERR_RAFT_PROPOSE_FAILED", http.StatusInternalServerError)
 						return
 					}
 				} else {
 					if err := wc.store.DeleteUserPolicy(r.Context(), username); err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
+						WriteJSONError(w, r, err.Error(), "ERR_POLICY_DELETE_FAILED", http.StatusInternalServerError)
 						return
 					}
 				}
