@@ -300,6 +300,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.handleWASMPipeline(w, r, bucket)
 			} else if r.URL.Query().Has("cold-tier") && r.URL.Query().Has("sweep") {
 				g.handleRunColdSweep(w, r, bucket)
+			} else if r.URL.Query().Has("delete") {
+				g.handleBatchDelete(w, r, bucket)
 			} else {
 				g.writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed on bucket level")
 			}
@@ -321,12 +323,18 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	switch r.Method {
 	case http.MethodGet:
-		g.handleGetObject(w, r, bucket, key)
+		if query.Has("tagging") {
+			g.handleGetObjectTagging(w, r, bucket, key)
+		} else {
+			g.handleGetObject(w, r, bucket, key)
+		}
 	case http.MethodPut:
 		if query.Has("uploadId") && query.Has("partNumber") {
 			g.handleUploadPart(w, r, bucket, key)
 		} else if query.Has("lock") {
 			g.handleLockObject(w, r, bucket, key)
+		} else if query.Has("tagging") {
+			g.handlePutObjectTagging(w, r, bucket, key)
 		} else {
 			g.handlePutObject(w, r, bucket, key)
 		}
@@ -343,6 +351,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		if query.Has("uploadId") {
 			g.handleAbortMultipart(w, r, bucket, key)
+		} else if query.Has("tagging") {
+			g.handleDeleteObjectTagging(w, r, bucket, key)
 		} else {
 			g.handleDeleteObject(w, r, bucket, key)
 		}
@@ -539,6 +549,23 @@ func (g *Gateway) handleListObjects(w http.ResponseWriter, r *http.Request, buck
 		objects, commonPrefixes, err = g.store.ListObjects(r.Context(), bucket, prefix, delimiter, marker, maxKeys)
 	}
 
+	if tagFilter := query.Get("tag-filter"); tagFilter != "" && err == nil {
+		parts := strings.SplitN(tagFilter, ":", 2)
+		if len(parts) != 2 {
+			parts = strings.SplitN(tagFilter, "=", 2)
+		}
+		if len(parts) == 2 {
+			filterKey, filterVal := parts[0], parts[1]
+			var filtered []*storage.ObjectVersion
+			for _, obj := range objects {
+				if obj.Tags != nil && obj.Tags[filterKey] == filterVal {
+					filtered = append(filtered, obj)
+				}
+			}
+			objects = filtered
+		}
+	}
+
 	if err != nil {
 		if errors.Is(err, storage.ErrBucketNotFound) {
 			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
@@ -659,6 +686,12 @@ func (g *Gateway) handleListObjectVersions(w http.ResponseWriter, r *http.Reques
 }
 
 func (g *Gateway) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	copySource := r.Header.Get("x-amz-copy-source")
+	if copySource != "" {
+		g.handleCopyObject(w, r, bucket, key, copySource)
+		return
+	}
+
 	size := r.ContentLength
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
@@ -1316,6 +1349,14 @@ func (g *Gateway) checkAuthorization(r *http.Request) bool {
 			}
 		case http.MethodHead:
 			action = "s3:ListBucket"
+		case http.MethodPost:
+			if r.URL.Query().Has("pipeline") {
+				action = "s3:PutObject"
+			} else if r.URL.Query().Has("delete") {
+				action = "s3:DeleteObject"
+			} else {
+				action = "s3:PutObject"
+			}
 		default:
 			return false
 		}
@@ -1323,11 +1364,23 @@ func (g *Gateway) checkAuthorization(r *http.Request) bool {
 		resource = "arn:aws:s3:::" + bucket + "/" + key
 		switch r.Method {
 		case http.MethodGet:
-			action = "s3:GetObject"
+			if r.URL.Query().Has("tagging") {
+				action = "s3:GetObjectTagging"
+			} else {
+				action = "s3:GetObject"
+			}
 		case http.MethodPut:
-			action = "s3:PutObject"
+			if r.URL.Query().Has("tagging") {
+				action = "s3:PutObjectTagging"
+			} else {
+				action = "s3:PutObject"
+			}
 		case http.MethodDelete:
-			action = "s3:DeleteObject"
+			if r.URL.Query().Has("tagging") {
+				action = "s3:DeleteObjectTagging"
+			} else {
+				action = "s3:DeleteObject"
+			}
 		case http.MethodHead:
 			action = "s3:GetObject"
 		case http.MethodPost:
@@ -2009,4 +2062,226 @@ func (g *Gateway) notifyEvent(eventName, bucket, key string, size int64, etag st
 		}(g.notificationStompAddr, g.notificationStompTopic, jsonBytes)
 	}
 }
+
+func (g *Gateway) handleCopyObject(w http.ResponseWriter, r *http.Request, destBucket, destKey, copySource string) {
+	copySource = strings.TrimPrefix(copySource, "/")
+	parts := strings.SplitN(copySource, "/", 2)
+	if len(parts) != 2 {
+		g.writeError(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source header format.")
+		return
+	}
+	srcBucket, srcKeyAndQuery := parts[0], parts[1]
+	
+	srcKey := srcKeyAndQuery
+	srcVersionID := ""
+	if idx := strings.Index(srcKeyAndQuery, "?"); idx != -1 {
+		srcKey = srcKeyAndQuery[:idx]
+		queryParams, err := url.ParseQuery(srcKeyAndQuery[idx+1:])
+		if err == nil {
+			srcVersionID = queryParams.Get("versionId")
+		}
+	}
+
+	var err error
+	srcBucket, err = url.QueryUnescape(srcBucket)
+	if err != nil {
+		srcBucket = parts[0]
+	}
+	srcKey, err = url.QueryUnescape(srcKey)
+	if err != nil {
+		srcKey = srcKeyAndQuery
+	}
+
+	reader, srcObj, err := g.store.GetObject(r.Context(), srcBucket, srcKey, srcVersionID)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotFound) || errors.Is(err, storage.ErrBucketNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchKey", "The source object does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	defer reader.Close()
+
+	destObj, err := g.store.PutObject(r.Context(), destBucket, destKey, reader, srcObj.Size, srcObj.ContentType)
+	if err != nil {
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	if g.cluster != nil && r.Header.Get("X-ServStore-Replicated") != "true" {
+		ring := g.cluster.Ring()
+		if ring != nil {
+			owners, err := ring.GetNodes(destBucket+"/"+destKey, g.replicationFactor)
+			if err == nil && len(owners) > 1 {
+				var wg sync.WaitGroup
+				for _, owner := range owners {
+					if owner == g.cluster.LocalNodeID() {
+						continue
+					}
+					addr, exists := g.cluster.GetNodeAddress(owner)
+					if !exists {
+						continue
+					}
+					wg.Add(1)
+					go func(nodeAddr string) {
+						defer wg.Done()
+						_ = g.replicateObjectToNode(r.Context(), destBucket, destKey, destObj, nodeAddr)
+					}(addr)
+				}
+				wg.Wait()
+			}
+		}
+	}
+
+	type CopyObjectResult struct {
+		XMLName      xml.Name `xml:"CopyObjectResult"`
+		Xmlns        string   `xml:"xmlns,attr,omitempty"`
+		LastModified string   `xml:"LastModified"`
+		ETag         string   `xml:"ETag"`
+	}
+
+	res := CopyObjectResult{
+		Xmlns:        xmlNamespace,
+		LastModified: destObj.LastModified.UTC().Format(time.RFC3339),
+		ETag:         `"` + destObj.ETag + `"`,
+	}
+
+	g.writeXML(w, http.StatusOK, res)
+}
+
+func (g *Gateway) handleBatchDelete(w http.ResponseWriter, r *http.Request, bucket string) {
+	var req Delete
+	decoder := xml.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil {
+		g.writeError(w, http.StatusBadRequest, "MalformedXML", "XML body is malformed.")
+		return
+	}
+
+	res := DeleteResult{
+		Xmlns: xmlNamespace,
+	}
+
+	for _, obj := range req.Objects {
+		deletedVer, err := g.store.DeleteObject(r.Context(), bucket, obj.Key, obj.VersionId)
+		if err != nil {
+			code := "InternalError"
+			if errors.Is(err, storage.ErrObjectNotFound) || errors.Is(err, storage.ErrBucketNotFound) {
+				code = "NoSuchKey"
+			} else if errors.Is(err, storage.ErrObjectLocked) {
+				code = "ObjectLocked"
+			}
+			res.Errors = append(res.Errors, DeleteErrorResult{
+				Key:       obj.Key,
+				VersionId: obj.VersionId,
+				Code:      code,
+				Message:   err.Error(),
+			})
+			continue
+		}
+
+		if g.cluster != nil && r.Header.Get("X-ServStore-Replicated") != "true" {
+			ring := g.cluster.Ring()
+			if ring != nil {
+				owners, err := ring.GetNodes(bucket+"/"+obj.Key, g.replicationFactor)
+				if err == nil && len(owners) > 1 {
+					go func(k string, vid string) {
+						for _, owner := range owners {
+							if owner == g.cluster.LocalNodeID() {
+								continue
+							}
+							addr, exists := g.cluster.GetNodeAddress(owner)
+							if !exists {
+								continue
+							}
+							_ = g.replicateDeleteToNode(context.Background(), bucket, k, vid, addr)
+						}
+					}(obj.Key, obj.VersionId)
+				}
+			}
+		}
+
+		if !req.Quiet {
+			delRes := DeletedResult{
+				Key:       obj.Key,
+				VersionId: obj.VersionId,
+			}
+			if deletedVer.IsDeleteMarker {
+				delRes.DeleteMarker = true
+				delRes.DeleteMarkerVersionId = deletedVer.VersionID
+			}
+			res.Deleted = append(res.Deleted, delRes)
+		}
+	}
+
+	g.writeXML(w, http.StatusOK, res)
+}
+
+func (g *Gateway) handlePutObjectTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	versionID := r.URL.Query().Get("versionId")
+
+	var tagConf Tagging
+	decoder := xml.NewDecoder(r.Body)
+	if err := decoder.Decode(&tagConf); err != nil {
+		g.writeError(w, http.StatusBadRequest, "MalformedXML", "XML body is malformed.")
+		return
+	}
+
+	tags := make(map[string]string)
+	for _, t := range tagConf.TagSet {
+		tags[t.Key] = t.Value
+	}
+
+	_, err := g.store.PutObjectTagging(r.Context(), bucket, key, versionID, tags)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (g *Gateway) handleGetObjectTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	versionID := r.URL.Query().Get("versionId")
+
+	tags, err := g.store.GetObjectTagging(r.Context(), bucket, key, versionID)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	res := Tagging{
+		Xmlns: xmlNamespace,
+	}
+	for k, v := range tags {
+		res.TagSet = append(res.TagSet, Tag{Key: k, Value: v})
+	}
+
+	g.writeXML(w, http.StatusOK, res)
+}
+
+func (g *Gateway) handleDeleteObjectTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	versionID := r.URL.Query().Get("versionId")
+
+	_, err := g.store.DeleteObjectTagging(r.Context(), bucket, key, versionID)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 

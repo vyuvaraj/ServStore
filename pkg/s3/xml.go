@@ -145,3 +145,47 @@ type LifecycleExpiration struct {
 	Days int `xml:"Days"`
 }
 
+type Tagging struct {
+	XMLName xml.Name `xml:"Tagging"`
+	Xmlns   string   `xml:"xmlns,attr,omitempty"`
+	TagSet  []Tag    `xml:"TagSet>Tag"`
+}
+
+type Tag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
+type Delete struct {
+	XMLName xml.Name       `xml:"Delete"`
+	Quiet   bool           `xml:"Quiet"`
+	Objects []DeleteObject `xml:"Object"`
+}
+
+type DeleteObject struct {
+	Key       string `xml:"Key"`
+	VersionId string `xml:"VersionId,omitempty"`
+}
+
+type DeleteResult struct {
+	XMLName xml.Name            `xml:"DeleteResult"`
+	Xmlns   string              `xml:"xmlns,attr,omitempty"`
+	Deleted []DeletedResult     `xml:"Deleted"`
+	Errors  []DeleteErrorResult `xml:"Error"`
+}
+
+type DeletedResult struct {
+	Key                   string `xml:"Key"`
+	VersionId             string `xml:"VersionId,omitempty"`
+	DeleteMarker          bool   `xml:"DeleteMarker,omitempty"`
+	DeleteMarkerVersionId string `xml:"DeleteMarkerVersionId,omitempty"`
+}
+
+type DeleteErrorResult struct {
+	Key       string `xml:"Key"`
+	VersionId string `xml:"VersionId,omitempty"`
+	Code      string `xml:"Code"`
+	Message   string `xml:"Message"`
+}
+
+

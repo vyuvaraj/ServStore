@@ -16,17 +16,18 @@ var (
 )
 
 type ObjectVersion struct {
-	VersionID      string     `json:"version_id"`
-	Key            string     `json:"key"`
-	Size           int64      `json:"size"`
-	LastModified   time.Time  `json:"last_modified"`
-	ETag           string     `json:"etag"`
-	ContentType    string     `json:"content_type"`
-	IsLatest       bool       `json:"is_latest"`
-	IsDeleteMarker bool       `json:"is_delete_marker"`
-	Locked         bool       `json:"locked,omitempty"`          // WORM lock active
-	RetainUntil    *time.Time `json:"retain_until,omitempty"`    // lock expiry (nil = no lock)
-	Checksum       string     `json:"checksum,omitempty"`        // BLAKE3 checksum
+	VersionID      string            `json:"version_id"`
+	Key            string            `json:"key"`
+	Size           int64             `json:"size"`
+	LastModified   time.Time         `json:"last_modified"`
+	ETag           string            `json:"etag"`
+	ContentType    string            `json:"content_type"`
+	IsLatest       bool              `json:"is_latest"`
+	IsDeleteMarker bool              `json:"is_delete_marker"`
+	Locked         bool              `json:"locked,omitempty"`       // WORM lock active
+	RetainUntil    *time.Time        `json:"retain_until,omitempty"` // lock expiry (nil = no lock)
+	Checksum       string            `json:"checksum,omitempty"`     // BLAKE3 checksum
+	Tags           map[string]string `json:"tags,omitempty"`
 }
 
 type ObjectMeta struct {
@@ -76,6 +77,10 @@ type StorageEngine interface {
 	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 
 	LockObject(ctx context.Context, bucket, key, versionID string, retainUntil time.Time) (*ObjectVersion, error)
+	PutObjectTagging(ctx context.Context, bucket, key, versionID string, tags map[string]string) (*ObjectVersion, error)
+	GetObjectTagging(ctx context.Context, bucket, key, versionID string) (map[string]string, error)
+	DeleteObjectTagging(ctx context.Context, bucket, key, versionID string) (*ObjectVersion, error)
+
 
 	SetBucketLifecycle(ctx context.Context, bucket string, rules []LifecycleRule) error
 	GetBucketLifecycle(ctx context.Context, bucket string) ([]LifecycleRule, error)

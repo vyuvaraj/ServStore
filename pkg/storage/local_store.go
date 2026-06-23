@@ -1796,3 +1796,113 @@ func (s *LocalStore) RunColdSweep(ctx context.Context) (int, []error) {
 	}
 	return mgr.RunSweep(ctx)
 }
+
+func (s *LocalStore) PutObjectTagging(ctx context.Context, bucket, key, versionID string, tags map[string]string) (*ObjectVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	om, err := s.readObjectMeta(bucket, key)
+	if err != nil {
+		return nil, err
+	}
+
+	var targetVer *ObjectVersion
+	for i := range om.Versions {
+		if versionID == "" {
+			if om.Versions[i].IsLatest {
+				targetVer = &om.Versions[i]
+				break
+			}
+		} else {
+			if om.Versions[i].VersionID == versionID {
+				targetVer = &om.Versions[i]
+				break
+			}
+		}
+	}
+
+	if targetVer == nil {
+		return nil, ErrObjectNotFound
+	}
+
+	targetVer.Tags = tags
+
+	if err := s.writeObjectMeta(bucket, key, om); err != nil {
+		return nil, err
+	}
+
+	return targetVer, nil
+}
+
+func (s *LocalStore) GetObjectTagging(ctx context.Context, bucket, key, versionID string) (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	om, err := s.readObjectMeta(bucket, key)
+	if err != nil {
+		return nil, err
+	}
+
+	var targetVer *ObjectVersion
+	for i := range om.Versions {
+		if versionID == "" {
+			if om.Versions[i].IsLatest {
+				targetVer = &om.Versions[i]
+				break
+			}
+		} else {
+			if om.Versions[i].VersionID == versionID {
+				targetVer = &om.Versions[i]
+				break
+			}
+		}
+	}
+
+	if targetVer == nil {
+		return nil, ErrObjectNotFound
+	}
+
+	if targetVer.Tags == nil {
+		return make(map[string]string), nil
+	}
+
+	return targetVer.Tags, nil
+}
+
+func (s *LocalStore) DeleteObjectTagging(ctx context.Context, bucket, key, versionID string) (*ObjectVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	om, err := s.readObjectMeta(bucket, key)
+	if err != nil {
+		return nil, err
+	}
+
+	var targetVer *ObjectVersion
+	for i := range om.Versions {
+		if versionID == "" {
+			if om.Versions[i].IsLatest {
+				targetVer = &om.Versions[i]
+				break
+			}
+		} else {
+			if om.Versions[i].VersionID == versionID {
+				targetVer = &om.Versions[i]
+				break
+			}
+		}
+	}
+
+	if targetVer == nil {
+		return nil, ErrObjectNotFound
+	}
+
+	targetVer.Tags = nil
+
+	if err := s.writeObjectMeta(bucket, key, om); err != nil {
+		return nil, err
+	}
+
+	return targetVer, nil
+}
+
