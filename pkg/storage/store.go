@@ -44,13 +44,23 @@ type LifecycleRule struct {
 	ExpirationDays int    `json:"expiration_days"` // Delete objects older than this many days
 }
 
+type WASMTrigger struct {
+	Event       string `json:"event"`                  // "ObjectCreated:Put", "ObjectRemoved:Delete", or "*"
+	WASMKey     string `json:"wasm_key"`               // Key of the compiled WASM binary inside the bucket
+	Prefix      string `json:"prefix,omitempty"`       // Filter key prefix
+	Suffix      string `json:"suffix,omitempty"`       // Filter key suffix
+	MemoryLimit int    `json:"memory_limit,omitempty"` // Memory page limit in MB, default 64
+	Timeout     int    `json:"timeout,omitempty"`      // Wall-clock execution timeout in seconds, default 30
+}
+
 type Bucket struct {
 	Name               string          `json:"name"`
 	CreatedTime        time.Time       `json:"created_time"`
 	Versioning         string          `json:"versioning"` // "Enabled", "Suspended", "Disabled"
 	Lifecycle          []LifecycleRule `json:"lifecycle,omitempty"`
 	ContentAddressable bool            `json:"content_addressable,omitempty"`
-	Quota              int64             `json:"quota,omitempty"`
+	Quota              int64           `json:"quota,omitempty"`
+	Triggers           []WASMTrigger   `json:"triggers,omitempty"`
 }
 
 type PartInfo struct {
@@ -84,6 +94,8 @@ type StorageEngine interface {
 	DeleteObjectTagging(ctx context.Context, bucket, key, versionID string) (*ObjectVersion, error)
 	SetBucketQuota(ctx context.Context, bucket string, quota int64) error
 	GetBucketQuota(ctx context.Context, bucket string) (int64, error)
+	SetBucketTriggers(ctx context.Context, bucket string, triggers []WASMTrigger) error
+	GetBucketTriggers(ctx context.Context, bucket string) ([]WASMTrigger, error)
 
 
 

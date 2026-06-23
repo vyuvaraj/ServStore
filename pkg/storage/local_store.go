@@ -2093,4 +2093,32 @@ func (s *LocalStore) GetBucketQuota(ctx context.Context, bucket string) (int64, 
 	return b.Quota, nil
 }
 
+func (s *LocalStore) SetBucketTriggers(ctx context.Context, bucket string, triggers []WASMTrigger) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return err
+	}
+
+	b.Triggers = triggers
+	return s.writeBucketMeta(bucket, b)
+}
+
+func (s *LocalStore) GetBucketTriggers(ctx context.Context, bucket string) ([]WASMTrigger, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	if b.Triggers == nil {
+		return []WASMTrigger{}, nil
+	}
+	return b.Triggers, nil
+}
+
 

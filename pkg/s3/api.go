@@ -29,6 +29,7 @@ import (
 	"servstore/pkg/pipeline"
 	"servstore/pkg/ratelimit"
 	"servstore/pkg/storage"
+	"servstore/pkg/wasm"
 )
 
 type Gateway struct {
@@ -284,6 +285,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.handleGetBucketColdTier(w, r, bucket)
 			} else if r.URL.Query().Has("quota") {
 				g.handleGetBucketQuota(w, r, bucket)
+			} else if r.URL.Query().Has("triggers") {
+				g.handleGetBucketTriggers(w, r, bucket)
 			} else {
 				g.handleListObjects(w, r, bucket)
 			}
@@ -296,6 +299,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.handlePutBucketColdTier(w, r, bucket)
 			} else if r.URL.Query().Has("quota") {
 				g.handlePutBucketQuota(w, r, bucket)
+			} else if r.URL.Query().Has("triggers") {
+				g.handlePutBucketTriggers(w, r, bucket)
 			} else {
 				g.handleCreateBucket(w, r, bucket)
 			}
@@ -559,6 +564,64 @@ func (g *Gateway) handleGetBucketQuota(w http.ResponseWriter, r *http.Request, b
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]int64{"quota": quota})
+}
+
+func (g *Gateway) handlePutBucketTriggers(w http.ResponseWriter, r *http.Request, bucket string) {
+	var triggers []storage.WASMTrigger
+	if err := json.NewDecoder(r.Body).Decode(&triggers); err != nil {
+		g.writeError(w, http.StatusBadRequest, "InvalidJSON", "Failed to decode triggers JSON body.")
+		return
+	}
+
+	// Validate triggers
+	for i, t := range triggers {
+		if t.Event == "" || t.WASMKey == "" {
+			g.writeError(w, http.StatusBadRequest, "InvalidTrigger", "Trigger must specify 'event' and 'wasm_key'.")
+			return
+		}
+		if t.MemoryLimit <= 0 {
+			triggers[i].MemoryLimit = 64
+		}
+		if t.Timeout <= 0 {
+			triggers[i].Timeout = 30
+		}
+	}
+
+	payload, err := json.Marshal(triggers)
+	if err != nil {
+		g.writeError(w, http.StatusInternalServerError, "InternalError", "Failed to marshal triggers payload.")
+		return
+	}
+
+	err = g.proposeOrExecute(w, r, "SetBucketTriggers", bucket, "", payload, func() error {
+		return g.store.SetBucketTriggers(r.Context(), bucket, triggers)
+	})
+	if err != nil {
+		if errors.Is(err, storage.ErrBucketNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (g *Gateway) handleGetBucketTriggers(w http.ResponseWriter, r *http.Request, bucket string) {
+	triggers, err := g.store.GetBucketTriggers(r.Context(), bucket)
+	if err != nil {
+		if errors.Is(err, storage.ErrBucketNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(triggers)
 }
 
 func (g *Gateway) handleListObjects(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -2124,10 +2187,6 @@ func (g *Gateway) handleWASMPipeline(w http.ResponseWriter, r *http.Request, buc
 }
 
 func (g *Gateway) notifyEvent(eventName, bucket, key string, size int64, etag string) {
-	if g.notificationWebhook == "" && g.notificationStompAddr == "" {
-		return
-	}
-
 	payload := map[string]interface{}{
 		"event":     eventName,
 		"bucket":    bucket,
@@ -2174,6 +2233,59 @@ func (g *Gateway) notifyEvent(eventName, bucket, key string, size int64, etag st
 			slog.Info("Successfully dispatched event notification to STOMP topic", "topic", topic, "event", eventName)
 		}(g.notificationStompAddr, g.notificationStompTopic, jsonBytes)
 	}
+
+	// WASM Trigger Execution in a goroutine
+	go func() {
+		triggers, err := g.store.GetBucketTriggers(context.Background(), bucket)
+		if err != nil {
+			return
+		}
+
+		for _, t := range triggers {
+			// Match event
+			eventMatched := t.Event == "*" || t.Event == eventName
+			if !eventMatched {
+				continue
+			}
+
+			// Match prefix
+			if t.Prefix != "" && !strings.HasPrefix(key, t.Prefix) {
+				continue
+			}
+
+			// Match suffix
+			if t.Suffix != "" && !strings.HasSuffix(key, t.Suffix) {
+				continue
+			}
+
+			// Fetch WASM bytes
+			wasmBytes, err := g.store.GetObjectBytes(context.Background(), bucket, t.WASMKey, "")
+			if err != nil {
+				slog.Error("Failed to fetch WASM binary for event trigger", "bucket", bucket, "wasm_key", t.WASMKey, "error", err)
+				continue
+			}
+
+			memLimit := t.MemoryLimit
+			if memLimit <= 0 {
+				memLimit = 64
+			}
+			timeout := t.Timeout
+			if timeout <= 0 {
+				timeout = 30
+			}
+
+			// Execute WASM in background goroutine
+			go func(tr storage.WASMTrigger, wb []byte) {
+				slog.Info("Executing WASM trigger", "event", eventName, "wasm_key", tr.WASMKey, "bucket", bucket, "key", key)
+				out, err := wasm.Execute(context.Background(), wb, jsonBytes, memLimit, timeout)
+				if err != nil {
+					slog.Error("WASM trigger execution failed", "wasm_key", tr.WASMKey, "error", err)
+					return
+				}
+				slog.Info("WASM trigger executed successfully", "wasm_key", tr.WASMKey, "output", string(out))
+			}(t, wasmBytes)
+		}
+	}()
 }
 
 func (g *Gateway) handleCopyObject(w http.ResponseWriter, r *http.Request, destBucket, destKey, copySource string) {
