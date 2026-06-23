@@ -77,6 +77,12 @@ func (f *MetadataFSM) Apply(l *raft.Log) interface{} {
 			return err
 		}
 		return f.store.SetBucketNotifications(ctx, cmd.BucketName, rules)
+	case "SetBucketGeoPlacement":
+		var cfg storage.GeoPlacementConfig
+		if err := json.Unmarshal(cmd.Value, &cfg); err != nil {
+			return err
+		}
+		return f.store.SetBucketGeoPlacement(ctx, cmd.BucketName, &cfg)
 	}
 
 	return fmt.Errorf("unsupported raft metadata op: %s", cmd.Op)

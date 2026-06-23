@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
@@ -46,6 +47,8 @@ type Gateway struct {
 	notificationWebhook    string
 	notificationStompAddr  string
 	notificationStompTopic string
+	consoleSessionMap      map[string]storage.ConsoleSession
+	sessionMutex           sync.RWMutex
 }
 
 func (g *Gateway) WithNotificationWebhook(url string) *Gateway {
@@ -79,6 +82,7 @@ func NewGateway(store storage.StorageEngine, auth *auth.AuthProvider, raftNode *
 		erasureEnabled:    erasureEnabled,
 		dataShards:        dataShards,
 		parityShards:      parityShards,
+		consoleSessionMap: make(map[string]storage.ConsoleSession),
 	}
 }
 
@@ -126,6 +130,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Intercept Prometheus metrics endpoint
 	if r.URL.Path == "/metrics" && r.Method == http.MethodGet {
 		metrics.Handler().ServeHTTP(w, r)
+		return
+	}
+
+	// Intercept Console login / logout / session APIs
+	if r.URL.Path == "/console/login" && r.Method == http.MethodPost {
+		g.handleConsoleLogin(w, r)
+		return
+	}
+	if r.URL.Path == "/console/logout" && r.Method == http.MethodPost {
+		g.handleConsoleLogout(w, r)
+		return
+	}
+	if r.URL.Path == "/console/session" && r.Method == http.MethodGet {
+		g.handleConsoleSession(w, r)
 		return
 	}
 
@@ -332,6 +350,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.handleGetBucketTriggers(w, r, bucket)
 			} else if r.URL.Query().Has("notification") {
 				g.handleGetBucketNotifications(w, r, bucket)
+			} else if r.URL.Query().Has("geo-placement") {
+				g.handleGetBucketGeoPlacement(w, r, bucket)
 			} else {
 				g.handleListObjects(w, r, bucket)
 			}
@@ -348,6 +368,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.handlePutBucketTriggers(w, r, bucket)
 			} else if r.URL.Query().Has("notification") {
 				g.handlePutBucketNotifications(w, r, bucket)
+			} else if r.URL.Query().Has("geo-placement") {
+				g.handlePutBucketGeoPlacement(w, r, bucket)
 			} else {
 				g.handleCreateBucket(w, r, bucket)
 			}
@@ -611,6 +633,131 @@ func (g *Gateway) handleGetBucketQuota(w http.ResponseWriter, r *http.Request, b
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]int64{"quota": quota})
+}
+
+func (g *Gateway) handlePutBucketGeoPlacement(w http.ResponseWriter, r *http.Request, bucket string) {
+	var cfg storage.GeoPlacementConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		g.writeError(w, http.StatusBadRequest, "InvalidJSON", "Failed to decode geo config JSON.")
+		return
+	}
+
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		g.writeError(w, http.StatusInternalServerError, "InternalError", "Failed to marshal payload.")
+		return
+	}
+
+	err = g.proposeOrExecute(w, r, "SetBucketGeoPlacement", bucket, "", payload, func() error {
+		return g.store.SetBucketGeoPlacement(r.Context(), bucket, &cfg)
+	})
+	if err != nil {
+		if errors.Is(err, storage.ErrBucketNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (g *Gateway) handleGetBucketGeoPlacement(w http.ResponseWriter, r *http.Request, bucket string) {
+	cfg, err := g.store.GetBucketGeoPlacement(r.Context(), bucket)
+	if err != nil {
+		if errors.Is(err, storage.ErrBucketNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	if cfg == nil {
+		g.writeError(w, http.StatusNotFound, "NoGeoPlacement", "No placement policy defined.")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+func (g *Gateway) handleConsoleLogin(w http.ResponseWriter, r *http.Request) {
+	var credentials struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&credentials); err != nil {
+		g.writeError(w, http.StatusBadRequest, "InvalidJSON", "Failed to decode credentials.")
+		return
+	}
+
+	// Retrieve correct credentials using Gateway Auth Provider
+	adminUser, adminPass := g.auth.GetAdminCredentials()
+	if credentials.Username != adminUser || credentials.Password != adminPass {
+		g.writeError(w, http.StatusForbidden, "AccessDenied", "Invalid username or password.")
+		return
+	}
+
+	token := "token-" + generateUUID()
+	session := storage.ConsoleSession{
+		SessionID: token,
+		Username:  credentials.Username,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+
+	g.sessionMutex.Lock()
+	g.consoleSessionMap[token] = session
+	g.sessionMutex.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(session)
+}
+
+func (g *Gateway) handleConsoleLogout(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+
+	g.sessionMutex.Lock()
+	_, exists := g.consoleSessionMap[token]
+	if exists {
+		delete(g.consoleSessionMap, token)
+	}
+	g.sessionMutex.Unlock()
+
+	if !exists {
+		g.writeError(w, http.StatusUnauthorized, "InvalidSession", "No active session found.")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (g *Gateway) handleConsoleSession(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+
+	g.sessionMutex.RLock()
+	session, exists := g.consoleSessionMap[token]
+	g.sessionMutex.RUnlock()
+
+	if !exists || time.Now().After(session.ExpiresAt) {
+		if exists {
+			g.sessionMutex.Lock()
+			delete(g.consoleSessionMap, token)
+			g.sessionMutex.Unlock()
+		}
+		g.writeError(w, http.StatusUnauthorized, "InvalidSession", "Session has expired or is invalid.")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(session)
 }
 
 func (g *Gateway) handlePutBucketTriggers(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -2670,4 +2817,8 @@ func (g *Gateway) handleDeleteObjectTagging(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
+func generateUUID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}

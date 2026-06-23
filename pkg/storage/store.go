@@ -71,6 +71,19 @@ type WASMTrigger struct {
 	Timeout     int    `json:"timeout,omitempty"`      // Wall-clock execution timeout in seconds, default 30
 }
 
+type GeoPlacementConfig struct {
+	PrimaryRegion   string   `json:"primary_region"`
+	ReplicaRegions  []string `json:"replica_regions"`
+	StrictPlacement bool     `json:"strict_placement"`
+}
+
+type ConsoleSession struct {
+	SessionID string    `json:"session_id"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 type Bucket struct {
 	Name               string                  `json:"name"`
 	CreatedTime        time.Time               `json:"created_time"`
@@ -80,6 +93,7 @@ type Bucket struct {
 	Quota              int64                   `json:"quota,omitempty"`
 	Triggers           []WASMTrigger           `json:"triggers,omitempty"`
 	NotificationConfig []EventNotificationRule `json:"notification_config,omitempty"`
+	GeoPlacement       *GeoPlacementConfig     `json:"geo_placement,omitempty"`
 }
 
 type PartInfo struct {
@@ -117,8 +131,8 @@ type StorageEngine interface {
 	GetBucketTriggers(ctx context.Context, bucket string) ([]WASMTrigger, error)
 	SetBucketNotifications(ctx context.Context, bucket string, rules []EventNotificationRule) error
 	GetBucketNotifications(ctx context.Context, bucket string) ([]EventNotificationRule, error)
-
-
+	SetBucketGeoPlacement(ctx context.Context, bucket string, cfg *GeoPlacementConfig) error
+	GetBucketGeoPlacement(ctx context.Context, bucket string) (*GeoPlacementConfig, error)
 
 	SetBucketLifecycle(ctx context.Context, bucket string, rules []LifecycleRule) error
 	GetBucketLifecycle(ctx context.Context, bucket string) ([]LifecycleRule, error)

@@ -2179,4 +2179,29 @@ func (s *LocalStore) GetBucketNotifications(ctx context.Context, bucket string) 
 	return b.NotificationConfig, nil
 }
 
+func (s *LocalStore) SetBucketGeoPlacement(ctx context.Context, bucket string, cfg *GeoPlacementConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return err
+	}
+
+	b.GeoPlacement = cfg
+	return s.writeBucketMeta(bucket, b)
+}
+
+func (s *LocalStore) GetBucketGeoPlacement(ctx context.Context, bucket string) (*GeoPlacementConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return b.GeoPlacement, nil
+}
+
 
