@@ -162,6 +162,49 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Duration("duration", duration),
 			slog.String("trace_id", span.TraceID),
 		)
+
+		// Exclude operations inside the system logs bucket itself to avoid cycles
+		bucket, key := parsePath(r.URL.Path)
+		if bucket != "" && bucket != "system-access-logs" {
+			username, _, _ := r.BasicAuth()
+			if username == "" {
+				username = "anonymous"
+			}
+			logEntry := storage.AccessLogEntry{
+				RequestID: span.TraceID,
+				Timestamp: startTime,
+				Requester: username,
+				Bucket:    bucket,
+				Key:       key,
+				Operation: r.Method,
+				SourceIP:  r.RemoteAddr,
+				Status:    trw.statusCode,
+			}
+			go func(entry storage.AccessLogEntry) {
+				defer func() {
+					if r := recover(); r != nil {
+						// Suppress panics from pebble DB if closed during test teardown
+					}
+				}()
+				logBytes, err := json.Marshal(entry)
+				if err != nil {
+					return
+				}
+				logKey := fmt.Sprintf("logs/%d-%s.json", entry.Timestamp.UnixNano(), entry.RequestID)
+				
+				// Ensure the log bucket exists
+				_ = g.store.CreateBucket(context.Background(), "system-access-logs")
+				
+				_, _ = g.store.PutObject(
+					context.Background(),
+					"system-access-logs",
+					logKey,
+					bytes.NewReader(logBytes),
+					int64(len(logBytes)),
+					"application/json",
+				)
+			}(logEntry)
+		}
 	}()
 
 	r = r.WithContext(ctx)

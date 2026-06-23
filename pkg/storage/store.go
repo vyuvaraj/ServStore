@@ -15,6 +15,17 @@ var (
 	ErrObjectLocked   = errors.New("object is locked (WORM) and cannot be modified or deleted until the retain-until date")
 )
 
+type AccessLogEntry struct {
+	RequestID string    `json:"request_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Requester string    `json:"requester"`
+	Bucket    string    `json:"bucket"`
+	Key       string    `json:"key"`
+	Operation string    `json:"operation"`
+	SourceIP  string    `json:"source_ip"`
+	Status    int       `json:"status"`
+}
+
 type ObjectVersion struct {
 	VersionID      string            `json:"version_id"`
 	Key            string            `json:"key"`

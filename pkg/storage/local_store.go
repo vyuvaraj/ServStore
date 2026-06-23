@@ -522,10 +522,25 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 		return nil, err
 	}
 
-	if strings.HasPrefix(contentType, "text/") || strings.Contains(key, ".txt") || strings.Contains(key, ".md") {
+	isText := strings.HasPrefix(contentType, "text/") || strings.Contains(key, ".txt") || strings.Contains(key, ".md")
+	isImage := strings.HasPrefix(contentType, "image/") || strings.Contains(key, ".png") || strings.Contains(key, ".jpg") || strings.Contains(key, ".jpeg")
+	isDoc := contentType == "application/pdf" || strings.Contains(key, ".pdf")
+	isAudio := strings.HasPrefix(contentType, "audio/") || strings.Contains(key, ".mp3") || strings.Contains(key, ".wav")
+
+	if isText || isImage || isDoc || isAudio {
 		idx, err := s.getOrBuildHNSWIndexNoLock(bucket)
 		if err == nil {
-			vector := GenerateEmbedding(string(plaintext))
+			var embeddingSource string
+			if isText {
+				embeddingSource = string(plaintext)
+			} else if isImage {
+				embeddingSource = "MOCK_CLIP_IMAGE_EMBEDDING_SOURCE: " + key
+			} else if isDoc {
+				embeddingSource = "MOCK_PDF_DOCUMENT_EMBEDDING_SOURCE: " + key
+			} else if isAudio {
+				embeddingSource = "MOCK_AUDIO_SPEECH_EMBEDDING_SOURCE: " + key
+			}
+			vector := GenerateEmbedding(embeddingSource)
 			idx.Insert(key, vector)
 		}
 	}
@@ -1786,23 +1801,38 @@ func (s *LocalStore) getOrBuildHNSWIndexNoLock(bucket string) (*HNSWIndex, error
 			continue
 		}
 
-		if strings.HasPrefix(latest.ContentType, "text/") || strings.Contains(key, ".txt") || strings.Contains(key, ".md") {
-			dataPath := s.getObjectDataPath(bucket, key, latest.VersionID)
-			fileData, err := os.ReadFile(dataPath)
-			if err != nil {
-				continue
-			}
-			var plaintext []byte
-			if s.encryptionKey != nil {
-				plaintext, err = decryptPayload(s.encryptionKey, fileData)
+		isText := strings.HasPrefix(latest.ContentType, "text/") || strings.Contains(key, ".txt") || strings.Contains(key, ".md")
+		isImage := strings.HasPrefix(latest.ContentType, "image/") || strings.Contains(key, ".png") || strings.Contains(key, ".jpg") || strings.Contains(key, ".jpeg")
+		isDoc := latest.ContentType == "application/pdf" || strings.Contains(key, ".pdf")
+		isAudio := strings.HasPrefix(latest.ContentType, "audio/") || strings.Contains(key, ".mp3") || strings.Contains(key, ".wav")
+
+		if isText || isImage || isDoc || isAudio {
+			var embeddingSource string
+			if isText {
+				dataPath := s.getObjectDataPath(bucket, key, latest.VersionID)
+				fileData, err := os.ReadFile(dataPath)
 				if err != nil {
 					continue
 				}
-			} else {
-				plaintext = fileData
+				var plaintext []byte
+				if s.encryptionKey != nil {
+					plaintext, err = decryptPayload(s.encryptionKey, fileData)
+					if err != nil {
+						continue
+					}
+				} else {
+					plaintext = fileData
+				}
+				embeddingSource = string(plaintext)
+			} else if isImage {
+				embeddingSource = "MOCK_CLIP_IMAGE_EMBEDDING_SOURCE: " + key
+			} else if isDoc {
+				embeddingSource = "MOCK_PDF_DOCUMENT_EMBEDDING_SOURCE: " + key
+			} else if isAudio {
+				embeddingSource = "MOCK_AUDIO_SPEECH_EMBEDDING_SOURCE: " + key
 			}
 
-			vector := GenerateEmbedding(string(plaintext))
+			vector := GenerateEmbedding(embeddingSource)
 			idx.Insert(key, vector)
 		}
 	}
