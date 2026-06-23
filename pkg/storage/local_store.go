@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/klauspost/compress/zstd"
 	"github.com/zeebo/blake3"
 )
 
@@ -142,13 +143,12 @@ func (s *LocalStore) DeleteBucket(ctx context.Context, bucket string) error {
 	defer iter.Close()
 
 	hasObjects := false
-	for iter.First(); iter.Valid() && bytes.HasPrefix(iter.Key(), prefix); {
+	for iter.First(); iter.Valid() && bytes.HasPrefix(iter.Key(), prefix); iter.Next() {
 		var om ObjectMeta
 		if json.Unmarshal(iter.Value(), &om) == nil && len(om.Versions) > 0 {
 			hasObjects = true
 			break
 		}
-		break
 	}
 	if hasObjects {
 		return fmt.Errorf("bucket is not empty")
@@ -271,6 +271,49 @@ func (s *LocalStore) writeObjectMeta(bucket, key string, om *ObjectMeta) error {
 	return s.pebbleDB.Set(dbKey, data, pebble.Sync)
 }
 
+func isCompressible(key, contentType string) bool {
+	ct := strings.ToLower(contentType)
+	if strings.HasPrefix(ct, "text/") ||
+		ct == "application/json" ||
+		ct == "application/xml" ||
+		ct == "application/javascript" ||
+		ct == "application/x-javascript" ||
+		strings.HasSuffix(ct, "+json") ||
+		strings.HasSuffix(ct, "+xml") {
+		return true
+	}
+	k := strings.ToLower(key)
+	return strings.HasSuffix(k, ".txt") ||
+		strings.HasSuffix(k, ".md") ||
+		strings.HasSuffix(k, ".json") ||
+		strings.HasSuffix(k, ".xml") ||
+		strings.HasSuffix(k, ".log")
+}
+
+func (s *LocalStore) getBucketUsageNoLock(bucket string) (int64, error) {
+	prefix := []byte("o:" + bucket + ":")
+	iter, err := s.pebbleDB.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+	})
+	if err != nil {
+		return 0, err
+	}
+	defer iter.Close()
+
+	var totalSize int64
+	for iter.First(); iter.Valid() && bytes.HasPrefix(iter.Key(), prefix); iter.Next() {
+		var om ObjectMeta
+		if json.Unmarshal(iter.Value(), &om) == nil {
+			for _, ver := range om.Versions {
+				if ver.IsLatest && !ver.IsDeleteMarker {
+					totalSize += ver.Size
+				}
+			}
+		}
+	}
+	return totalSize, nil
+}
+
 func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, contentType string) (ov *ObjectVersion, err error) {
 	_, span := otel.StartSpan(ctx, "Storage PutObject", 1)
 	span.SetAttribute("s3.bucket", bucket)
@@ -328,6 +371,27 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 
 	b3Checksum := ParallelBlake3Hash(plaintext)
 
+	// Quota Check
+	if b.Quota > 0 {
+		usage, err := s.getBucketUsageNoLock(bucket)
+		if err != nil {
+			return nil, err
+		}
+		var existingSize int64
+		if b.Versioning != "Enabled" {
+			if existing, err2 := s.readObjectMeta(bucket, key); err2 == nil {
+				for _, ver := range existing.Versions {
+					if ver.VersionID == "null" && ver.IsLatest && !ver.IsDeleteMarker {
+						existingSize = ver.Size
+					}
+				}
+			}
+		}
+		if usage - existingSize + written > b.Quota {
+			return nil, fmt.Errorf("quota exceeded: bucket has quota of %d bytes, upload would exceed it", b.Quota)
+		}
+	}
+
 	// If bucket is ContentAddressable, use cas-<checksum> as the version ID
 	if b.ContentAddressable {
 		versionID = "cas-" + b3Checksum
@@ -346,6 +410,7 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 		}
 	}
 
+	isCompressed := false
 	if !alreadyExists {
 		tmpFile, err := os.CreateTemp(filepath.Dir(dataPath), "put-object-*")
 		if err != nil {
@@ -356,26 +421,38 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 			_ = os.Remove(tmpFile.Name())
 		}()
 
+		var toWrite []byte
+		if isCompressible(key, contentType) {
+			enc, err := zstd.NewWriter(nil)
+			if err != nil {
+				return nil, err
+			}
+			toWrite = enc.EncodeAll(plaintext, nil)
+			isCompressed = true
+		} else {
+			toWrite = plaintext
+		}
+
 		// Encrypt if key is configured
-		var payload []byte
+		var finalBytes []byte
 		if s.encryptionKey != nil {
-			payload, err = encryptPayload(s.encryptionKey, plaintext)
+			finalBytes, err = encryptPayload(s.encryptionKey, toWrite)
 			if err != nil {
 				return nil, err
 			}
 		} else {
-			payload = plaintext
+			finalBytes = toWrite
 		}
 
 		// DirectIO logic: Bypass OS page cache for large writes (>16MB)
 		const directIOThreshold = 16 * 1024 * 1024
-		if len(payload) >= directIOThreshold {
+		if len(finalBytes) >= directIOThreshold {
 			_ = tmpFile.Close() // Close placeholder temp file
-			if err := WriteFileDirectIO(dataPath, payload); err != nil {
+			if err := WriteFileDirectIO(dataPath, finalBytes); err != nil {
 				return nil, err
 			}
 		} else {
-			if _, err := tmpFile.Write(payload); err != nil {
+			if _, err := tmpFile.Write(finalBytes); err != nil {
 				return nil, err
 			}
 			// Close temp file before renaming
@@ -383,6 +460,10 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 			if err := os.Rename(tmpFile.Name(), dataPath); err != nil {
 				return nil, err
 			}
+		}
+	} else {
+		if isCompressible(key, contentType) {
+			isCompressed = true
 		}
 	}
 
@@ -407,6 +488,7 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 		IsLatest:       true,
 		IsDeleteMarker: false,
 		Checksum:       b3Checksum,
+		Compressed:     isCompressed,
 	}
 
 	// Adjust existing versions: IsLatest must be set to false for other versions
@@ -543,10 +625,26 @@ func (s *LocalStore) GetObject(ctx context.Context, bucket, key, versionID strin
 		if err != nil {
 			return nil, nil, err
 		}
-		plaintext, err := decryptPayload(s.encryptionKey, ciphertext)
+		decrypted, err := decryptPayload(s.encryptionKey, ciphertext)
 		if err != nil {
 			return nil, nil, err
 		}
+
+		var plaintext []byte
+		if targetVer.Compressed {
+			dec, err := zstd.NewReader(nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			plaintext, err = dec.DecodeAll(decrypted, nil)
+			dec.Close()
+			if err != nil {
+				return nil, nil, fmt.Errorf("data integrity corruption detected (zstd decompression failed): %w", err)
+			}
+		} else {
+			plaintext = decrypted
+		}
+
 		if targetVer.Checksum != "" {
 			b3Hasher := blake3.New()
 			b3Hasher.Write(plaintext)
@@ -561,6 +659,33 @@ func (s *LocalStore) GetObject(ctx context.Context, bucket, key, versionID strin
 	file, err := os.Open(dataPath)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if targetVer.Compressed {
+		defer file.Close()
+		compressed, err := io.ReadAll(file)
+		if err != nil {
+			return nil, nil, err
+		}
+		dec, err := zstd.NewReader(nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		plaintext, err := dec.DecodeAll(compressed, nil)
+		dec.Close()
+		if err != nil {
+			return nil, nil, fmt.Errorf("data integrity corruption detected (zstd decompression failed): %w", err)
+		}
+
+		if targetVer.Checksum != "" {
+			b3Hasher := blake3.New()
+			b3Hasher.Write(plaintext)
+			sum := hex.EncodeToString(b3Hasher.Sum(nil))
+			if sum != targetVer.Checksum {
+				return nil, nil, fmt.Errorf("data integrity corruption detected (BLAKE3 mismatch): expected %s, got %s", targetVer.Checksum, sum)
+			}
+		}
+		return io.NopCloser(bytes.NewReader(plaintext)), targetVer, nil
 	}
 
 	if targetVer.Checksum != "" {
@@ -1156,15 +1281,50 @@ func (s *LocalStore) CompleteMultipartUpload(ctx context.Context, bucket, key, u
 
 	hasher.Write(assembledPlaintext)
 
+	// Quota Check
+	if b.Quota > 0 {
+		usage, err := s.getBucketUsageNoLock(bucket)
+		if err != nil {
+			return nil, err
+		}
+		var existingSize int64
+		if b.Versioning != "Enabled" {
+			if existing, err2 := s.readObjectMeta(bucket, key); err2 == nil {
+				for _, ver := range existing.Versions {
+					if ver.VersionID == "null" && ver.IsLatest && !ver.IsDeleteMarker {
+						existingSize = ver.Size
+					}
+				}
+			}
+		}
+		if usage - existingSize + totalSize > b.Quota {
+			return nil, fmt.Errorf("quota exceeded: bucket has quota of %d bytes, upload would exceed it", b.Quota)
+		}
+	}
+
+	// Prepare the final payload (compress if needed)
+	var toWrite []byte
+	isCompressed := false
+	if isCompressible(key, contentType) {
+		enc, err := zstd.NewWriter(nil)
+		if err != nil {
+			return nil, err
+		}
+		toWrite = enc.EncodeAll(assembledPlaintext, nil)
+		isCompressed = true
+	} else {
+		toWrite = assembledPlaintext
+	}
+
 	// Encrypt the complete assembled object before writing
 	var finalPayload []byte
 	if s.encryptionKey != nil {
-		finalPayload, err = encryptPayload(s.encryptionKey, assembledPlaintext)
+		finalPayload, err = encryptPayload(s.encryptionKey, toWrite)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		finalPayload = assembledPlaintext
+		finalPayload = toWrite
 	}
 
 	if _, err := outFile.Write(finalPayload); err != nil {
@@ -1196,6 +1356,8 @@ func (s *LocalStore) CompleteMultipartUpload(ctx context.Context, bucket, key, u
 		ContentType:    contentType,
 		IsLatest:       true,
 		IsDeleteMarker: false,
+		Checksum:       ParallelBlake3Hash(assembledPlaintext),
+		Compressed:     isCompressed,
 	}
 
 	// Adjust existing versions: IsLatest must be set to false for other versions
@@ -1905,4 +2067,30 @@ func (s *LocalStore) DeleteObjectTagging(ctx context.Context, bucket, key, versi
 
 	return targetVer, nil
 }
+
+func (s *LocalStore) SetBucketQuota(ctx context.Context, bucket string, quota int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return err
+	}
+
+	b.Quota = quota
+	return s.writeBucketMeta(bucket, b)
+}
+
+func (s *LocalStore) GetBucketQuota(ctx context.Context, bucket string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, err := s.readBucketMeta(bucket)
+	if err != nil {
+		return 0, err
+	}
+
+	return b.Quota, nil
+}
+
 

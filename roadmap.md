@@ -130,17 +130,17 @@ These items take ServStore from a production-ready S3-compatible engine to a **c
 | # | Item | Effort | Description | Status |
 |---|------|--------|-------------|--------|
 | 9.1 | **Multi-modal embedding engine** | Large | Auto-generate embeddings for images (CLIP), PDFs (text extraction + embedding), and audio (Whisper transcription + embedding) on ingest — not just text. Semantic search across any content type. | [ ] |
-| 9.2 | **Vector similarity + metadata hybrid queries** | Medium | Combine vector search with metadata filters: `GET /bucket?query=semantic&q=cloud+architecture&filter=author:alice&after=2025-01-01`. Structured + unstructured search in one call. | [ ] |
+| 9.2 | **Vector similarity + metadata hybrid queries** | Medium | Combine vector search with metadata filters: `GET /bucket?query=semantic&q=cloud+architecture&filter=author:alice&after=2025-01-01`. Structured + unstructured search in one call. | [x] |
 | 9.3 | **Incremental backup & point-in-time recovery** | Large | Continuous WAL-based backup to a remote target. Restore any bucket to any second in time — not just versioned objects but the exact state of the namespace. | [ ] |
 | 9.4 | **Object-level access logging** | Medium | Per-object access audit trail: who read/wrote/deleted, when, from which IP, with which identity. Immutable append-only log stored in a system bucket. SOC2/HIPAA prerequisite. | [ ] |
 | 9.5 | **S3 event notifications (CloudEvents)** | Medium | Emit CloudEvents-spec events on object lifecycle (`s3:ObjectCreated`, `s3:ObjectRemoved`, `s3:Replication`) to webhooks, ServQueue topics, or NATS subjects. | [ ] |
 | 9.6 | **Geo-aware data placement** | Large | Tag nodes with region/zone labels. Bucket policies like `replicate: { primary: us-east-1, secondary: eu-west-1, tertiary: ap-south-1 }`. Reads routed to nearest replica. | [ ] |
 | 9.7 | **Object tagging** | Small | `PUT /bucket/key?tagging` with key-value tags. Query objects by tag: `GET /bucket?tag-filter=env:prod`. S3-compatible tagging API. | [x] |
 | 9.8 | **Server-side copy** | Small | `PUT /dest-bucket/key` with `x-amz-copy-source` header — copy objects between buckets without downloading. Required S3 compatibility gap. | [x] |
-| 9.9 | **Bucket metrics & quota** | Medium | Per-bucket storage quota enforcement. Dashboard metrics: total size, object count, request rate, bandwidth, and growth trend. Alerts when approaching quota. | [ ] |
+| 9.9 | **Bucket metrics & quota** | Medium | Per-bucket storage quota enforcement. Dashboard metrics: total size, object count, request rate, bandwidth, and growth trend. Alerts when approaching quota. | [x] |
 | 9.10 | **WASM trigger on object events** | Large | Declare WASM functions that execute automatically on `PutObject` or `DeleteObject` — like AWS Lambda@S3 triggers but inside the storage engine. Zero-latency event processing. | [ ] |
 | 9.11 | **S3 batch operations** | Large | `POST /batch` API for bulk copy, delete, tagging, and metadata updates across thousands of objects. Job-based with progress tracking. Enterprise-scale operations. | [ ] |
-| 9.12 | **Content-type aware compression** | Medium | Automatically compress text, JSON, and log objects with zstd on write; decompress transparently on read. Storage reduction with zero client changes. | [ ] |
+| 9.12 | **Content-type aware compression** | Medium | Automatically compress text, JSON, and log objects with zstd on write; decompress transparently on read. Storage reduction with zero client changes. | [x] |
 | 9.13 | **Multi-user web console** | Medium | Support multiple console users with independent sessions, per-user bucket visibility, and activity history. Currently single-user embedded UI. | [ ] |
 | 9.14 | **Federation (cross-cluster namespace)** | Large | Federate multiple ServStore clusters under a single namespace. Global bucket names resolve to the owning cluster transparently — like DNS for objects. | [ ] |
 

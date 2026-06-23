@@ -28,6 +28,7 @@ type ObjectVersion struct {
 	RetainUntil    *time.Time        `json:"retain_until,omitempty"` // lock expiry (nil = no lock)
 	Checksum       string            `json:"checksum,omitempty"`     // BLAKE3 checksum
 	Tags           map[string]string `json:"tags,omitempty"`
+	Compressed     bool              `json:"compressed,omitempty"`
 }
 
 type ObjectMeta struct {
@@ -49,6 +50,7 @@ type Bucket struct {
 	Versioning         string          `json:"versioning"` // "Enabled", "Suspended", "Disabled"
 	Lifecycle          []LifecycleRule `json:"lifecycle,omitempty"`
 	ContentAddressable bool            `json:"content_addressable,omitempty"`
+	Quota              int64             `json:"quota,omitempty"`
 }
 
 type PartInfo struct {
@@ -80,6 +82,9 @@ type StorageEngine interface {
 	PutObjectTagging(ctx context.Context, bucket, key, versionID string, tags map[string]string) (*ObjectVersion, error)
 	GetObjectTagging(ctx context.Context, bucket, key, versionID string) (map[string]string, error)
 	DeleteObjectTagging(ctx context.Context, bucket, key, versionID string) (*ObjectVersion, error)
+	SetBucketQuota(ctx context.Context, bucket string, quota int64) error
+	GetBucketQuota(ctx context.Context, bucket string) (int64, error)
+
 
 
 	SetBucketLifecycle(ctx context.Context, bucket string, rules []LifecycleRule) error

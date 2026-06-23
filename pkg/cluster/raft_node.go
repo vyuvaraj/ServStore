@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +59,12 @@ func (f *MetadataFSM) Apply(l *raft.Log) interface{} {
 		return f.store.PutUserPolicy(ctx, cmd.KeyName, cmd.Value)
 	case "DeletePolicy":
 		return f.store.DeleteUserPolicy(ctx, cmd.KeyName)
+	case "SetBucketQuota":
+		quota, err := strconv.ParseInt(string(cmd.Value), 10, 64)
+		if err != nil {
+			return err
+		}
+		return f.store.SetBucketQuota(ctx, cmd.BucketName, quota)
 	}
 
 	return fmt.Errorf("unsupported raft metadata op: %s", cmd.Op)

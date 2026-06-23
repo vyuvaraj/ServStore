@@ -282,6 +282,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.handleGetBucketLifecycle(w, r, bucket)
 			} else if r.URL.Query().Has("cold-tier") {
 				g.handleGetBucketColdTier(w, r, bucket)
+			} else if r.URL.Query().Has("quota") {
+				g.handleGetBucketQuota(w, r, bucket)
 			} else {
 				g.handleListObjects(w, r, bucket)
 			}
@@ -292,6 +294,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.handlePutBucketLifecycle(w, r, bucket)
 			} else if r.URL.Query().Has("cold-tier") {
 				g.handlePutBucketColdTier(w, r, bucket)
+			} else if r.URL.Query().Has("quota") {
+				g.handlePutBucketQuota(w, r, bucket)
 			} else {
 				g.handleCreateBucket(w, r, bucket)
 			}
@@ -518,6 +522,45 @@ func (g *Gateway) handlePutBucketVersioning(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 }
 
+func (g *Gateway) handlePutBucketQuota(w http.ResponseWriter, r *http.Request, bucket string) {
+	quotaStr := r.URL.Query().Get("quota")
+	quota, err := strconv.ParseInt(quotaStr, 10, 64)
+	if err != nil || quota < 0 {
+		g.writeError(w, http.StatusBadRequest, "InvalidQuota", "Quota parameter must be a non-negative integer.")
+		return
+	}
+
+	err = g.proposeOrExecute(w, r, "SetBucketQuota", bucket, "", []byte(quotaStr), func() error {
+		return g.store.SetBucketQuota(r.Context(), bucket, quota)
+	})
+	if err != nil {
+		if errors.Is(err, storage.ErrBucketNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (g *Gateway) handleGetBucketQuota(w http.ResponseWriter, r *http.Request, bucket string) {
+	quota, err := g.store.GetBucketQuota(r.Context(), bucket)
+	if err != nil {
+		if errors.Is(err, storage.ErrBucketNotFound) {
+			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
+			return
+		}
+		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]int64{"quota": quota})
+}
+
 func (g *Gateway) handleListObjects(w http.ResponseWriter, r *http.Request, bucket string) {
 	query := r.URL.Query()
 	prefix := query.Get("prefix")
@@ -545,6 +588,68 @@ func (g *Gateway) handleListObjects(w http.ResponseWriter, r *http.Request, buck
 			}
 		}
 		objects, err = g.store.SemanticSearch(r.Context(), bucket, query.Get("q"), maxResults)
+		if err == nil {
+			// Hybrid metadata filtering
+			// 1. Tag filter via "filter" parameter
+			if filterParam := query.Get("filter"); filterParam != "" {
+				parts := strings.SplitN(filterParam, ":", 2)
+				if len(parts) != 2 {
+					parts = strings.SplitN(filterParam, "=", 2)
+				}
+				if len(parts) == 2 {
+					filterKey, filterVal := parts[0], parts[1]
+					var filtered []*storage.ObjectVersion
+					for _, obj := range objects {
+						if obj.Tags != nil && obj.Tags[filterKey] == filterVal {
+							filtered = append(filtered, obj)
+						}
+					}
+					objects = filtered
+				}
+			}
+
+			// 2. Date filtering via "after" parameter
+			if afterParam := query.Get("after"); afterParam != "" {
+				var t time.Time
+				var parseErr error
+				layouts := []string{time.RFC3339, "2006-01-02", "2006-01-02T15:04:05Z"}
+				for _, layout := range layouts {
+					if t, parseErr = time.Parse(layout, afterParam); parseErr == nil {
+						break
+					}
+				}
+				if parseErr == nil {
+					var filtered []*storage.ObjectVersion
+					for _, obj := range objects {
+						if obj.LastModified.After(t) {
+							filtered = append(filtered, obj)
+						}
+					}
+					objects = filtered
+				}
+			}
+
+			// 3. Date filtering via "before" parameter
+			if beforeParam := query.Get("before"); beforeParam != "" {
+				var t time.Time
+				var parseErr error
+				layouts := []string{time.RFC3339, "2006-01-02", "2006-01-02T15:04:05Z"}
+				for _, layout := range layouts {
+					if t, parseErr = time.Parse(layout, beforeParam); parseErr == nil {
+						break
+					}
+				}
+				if parseErr == nil {
+					var filtered []*storage.ObjectVersion
+					for _, obj := range objects {
+						if obj.LastModified.Before(t) {
+							filtered = append(filtered, obj)
+						}
+					}
+					objects = filtered
+				}
+			}
+		}
 	} else {
 		objects, commonPrefixes, err = g.store.ListObjects(r.Context(), bucket, prefix, delimiter, marker, maxKeys)
 	}
@@ -709,6 +814,10 @@ func (g *Gateway) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 			g.writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist.")
 			return
 		}
+		if strings.Contains(err.Error(), "quota exceeded") {
+			g.writeError(w, http.StatusConflict, "QuotaExceeded", err.Error())
+			return
+		}
 		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
@@ -825,7 +934,7 @@ func (g *Gateway) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	}
 
 	if err != nil {
-		isIntegrityErr := err != nil && strings.Contains(err.Error(), "integrity corruption detected")
+		isIntegrityErr := strings.Contains(err.Error(), "integrity corruption detected")
 		shouldFailover := (errors.Is(err, storage.ErrObjectNotFound) || errors.Is(err, storage.ErrBucketNotFound)) && r.Header.Get("X-ServStore-Replicated") != "true"
 		if isIntegrityErr {
 			shouldFailover = true // always failover if local file is corrupted, even if replicated GET was sent (to ensure data recovery)
@@ -1125,6 +1234,10 @@ func (g *Gateway) handleCompleteMultipart(w http.ResponseWriter, r *http.Request
 
 	obj, err := g.store.CompleteMultipartUpload(r.Context(), bucket, key, uploadID, parts, contentType)
 	if err != nil {
+		if strings.Contains(err.Error(), "quota exceeded") {
+			g.writeError(w, http.StatusConflict, "QuotaExceeded", err.Error())
+			return
+		}
 		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
@@ -1397,7 +1510,7 @@ func (g *Gateway) checkAuthorization(r *http.Request) bool {
 	return g.authorize(r, action, resource)
 }
 
-func (g *Gateway) proposeOrExecute(w http.ResponseWriter, r *http.Request, op string, bucketName, keyName string, value []byte, fallback func() error) error {
+func (g *Gateway) proposeOrExecute(_ http.ResponseWriter, _ *http.Request, op string, bucketName, keyName string, value []byte, fallback func() error) error {
 	if g.raftNode == nil {
 		return fallback()
 	}
