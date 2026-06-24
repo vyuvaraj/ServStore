@@ -105,11 +105,31 @@ func (hm *HealingManager) RunHealingCycle(ctx context.Context) error {
 
 			if targetNode != "" {
 				slog.Info("Rebalancing key: local node is no longer an owner, handing off", "key", ringKey, "to_node", targetNode)
+				GlobalHub.Publish(ClusterEvent{
+					Type:   "rebalance_progress",
+					NodeID: localNodeID,
+					Status: "rebalancing",
+					Details: map[string]interface{}{
+						"key":     ringKey,
+						"to_node": targetNode,
+						"action":  "handoff_start",
+					},
+				})
 				if err := hm.replicateLocalKeyToRemoteNode(ctx, localKey.Bucket, localKey.Key, targetAddr); err == nil {
 					if err := hm.purgeLocalKey(ctx, localKey.Bucket, localKey.Key); err != nil {
 						slog.Error("Failed to purge rebalanced key locally", "key", ringKey, "error", err)
 					} else {
 						slog.Info("Successfully rebalanced and purged key locally", "key", ringKey)
+						GlobalHub.Publish(ClusterEvent{
+							Type:   "rebalance_progress",
+							NodeID: localNodeID,
+							Status: "rebalanced",
+							Details: map[string]interface{}{
+								"key":     ringKey,
+								"to_node": targetNode,
+								"action":  "handoff_complete",
+							},
+						})
 					}
 				} else {
 					slog.Error("Failed to replicate key during rebalancing", "key", ringKey, "to_node", targetNode, "error", err)
@@ -137,10 +157,30 @@ func (hm *HealingManager) RunHealingCycle(ctx context.Context) error {
 
 					if !hasKey {
 						slog.Info("Auto-healing key: replicating missing replica", "key", ringKey, "to_node", owner)
+						GlobalHub.Publish(ClusterEvent{
+							Type:   "rebalance_progress",
+							NodeID: localNodeID,
+							Status: "healing",
+							Details: map[string]interface{}{
+								"key":     ringKey,
+								"to_node": owner,
+								"action":  "healing_start",
+							},
+						})
 						if err := hm.replicateLocalKeyToRemoteNode(ctx, localKey.Bucket, localKey.Key, addr); err != nil {
 							slog.Error("Failed to replicate key during auto-healing", "key", ringKey, "to_node", owner, "error", err)
 						} else {
 							slog.Info("Successfully auto-healed key", "key", ringKey, "to_node", owner)
+							GlobalHub.Publish(ClusterEvent{
+								Type:   "rebalance_progress",
+								NodeID: localNodeID,
+								Status: "healed",
+								Details: map[string]interface{}{
+									"key":     ringKey,
+									"to_node": owner,
+									"action":  "healing_complete",
+								},
+							})
 						}
 					}
 				}

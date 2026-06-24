@@ -62,6 +62,27 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if path == "/console/ws/events" {
+		if wc.auth.IsEnabled() {
+			authenticated := wc.auth.VerifyRequest(r)
+			if !authenticated {
+				tokenQuery := r.URL.Query().Get("token")
+				if tokenQuery != "" {
+					_, err := auth.ValidateToken(tokenQuery, wc.auth.JWTSecret())
+					if err == nil {
+						authenticated = true
+					}
+				}
+			}
+			if !authenticated {
+				WriteJSONError(w, r, "Unauthorized", "ERR_UNAUTHORIZED", http.StatusUnauthorized)
+				return
+			}
+		}
+		HandleWebSocketEvents(w, r)
+		return
+	}
+
 	if strings.HasPrefix(path, "/api/v1/") {
 		suffix := strings.TrimPrefix(path, "/api/v1/")
 		if suffix == "schema" || suffix == "metrics" || suffix == "traces" || suffix == "presign" {

@@ -116,7 +116,7 @@ Transition ServStore into a high-capacity, metadata-optimized cluster integrated
 | 8.2 | **Graceful shutdown on SIGTERM** | Small | Drain in-flight S3 requests, flush Raft log, and close cluster connections cleanly before exit. | [x] |
 | 8.3 | **Standardized error response contract** | Small | Return `{"error": "msg", "code": "ERR_CODE", "trace_id": "..."}` alongside S3 XML errors for non-S3 endpoints. | [x] |
 | 8.4 | **API versioning on console/admin endpoints** | Small | Version the console/admin API (`/console/v1/...`) before breaking changes accumulate. | [x] |
-| 8.5 | **WebSocket push for cluster events** | Medium | Push real-time rebalance progress, node join/leave events, and replication lag updates to ServConsole. | [ ] |
+| 8.5 | **WebSocket push for cluster events** | Medium | Push real-time rebalance progress, node join/leave events, and replication lag updates to ServConsole. | [x] |
 | 8.6 | **Bucket event notifications** | Medium | Emit events (`s3:ObjectCreated`, `s3:ObjectRemoved`) to a configurable webhook or ServQueue topic — enables event-driven architectures. | [x] |
 | 8.7 | **S3 Select (query-in-place)** | Large | Support SQL-like queries on CSV/JSON objects without downloading them — high-value enterprise feature. | [ ] |
 | 8.8 | **Batch delete API** | Small | `POST /?delete` with XML body for bulk object deletion — missing S3 compatibility gap. | [x] |

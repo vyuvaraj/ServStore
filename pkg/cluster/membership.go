@@ -205,6 +205,15 @@ func (mm *MembershipManager) updatePeerInfo(peer *NodeInfo) {
 			mm.ring.AddNode(peer.NodeID)
 		}
 		slog.Info("Discovered new cluster node", "node_id", peer.NodeID, "address", peer.Address, "region", peer.Region)
+		GlobalHub.Publish(ClusterEvent{
+			Type:   "node_join",
+			NodeID: peer.NodeID,
+			Status: peer.Status,
+			Details: map[string]interface{}{
+				"address": peer.Address,
+				"region":  peer.Region,
+			},
+		})
 		return
 	}
 
@@ -224,6 +233,16 @@ func (mm *MembershipManager) updatePeerInfo(peer *NodeInfo) {
 			} else {
 				mm.ring.RemoveNode(peer.NodeID)
 			}
+			GlobalHub.Publish(ClusterEvent{
+				Type:   "node_status_change",
+				NodeID: peer.NodeID,
+				Status: existing.Status,
+				Details: map[string]interface{}{
+					"old_status": oldStatus,
+					"address":    existing.Address,
+					"region":     existing.Region,
+				},
+			})
 		}
 	}
 }
@@ -334,6 +353,16 @@ func (mm *MembershipManager) checkTimeouts() {
 			peer.Status = "offline"
 			mm.ring.RemoveNode(peer.NodeID)
 			slog.Warn("Node went offline (heartbeat timeout)", "node_id", peer.NodeID, "address", peer.Address)
+			GlobalHub.Publish(ClusterEvent{
+				Type:   "node_status_change",
+				NodeID: peer.NodeID,
+				Status: "offline",
+				Details: map[string]interface{}{
+					"old_status": "online",
+					"address":    peer.Address,
+					"reason":     "heartbeat_timeout",
+				},
+			})
 		}
 	}
 }
