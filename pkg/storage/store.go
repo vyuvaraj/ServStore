@@ -108,6 +108,7 @@ type StorageEngine interface {
 	GetBucket(ctx context.Context, bucket string) (*Bucket, error)
 	SetBucketVersioning(ctx context.Context, bucket string, status string) error
 	SetBucketContentAddressable(ctx context.Context, bucket string, enabled bool) error
+	RestoreBucketToPointInTime(ctx context.Context, bucket string, targetTime time.Time) error
 
 	PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, contentType string) (*ObjectVersion, error)
 	GetObject(ctx context.Context, bucket, key, versionID string) (io.ReadCloser, *ObjectVersion, error)

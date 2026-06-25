@@ -102,12 +102,22 @@ func generateUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func (s *LocalStore) CreateBucket(ctx context.Context, bucket string) error {
+func (s *LocalStore) CreateBucket(ctx context.Context, bucket string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	defer func() {
+		if err == nil && ctx.Value("is_restore") == nil {
+			_ = s.writeWAL(WALEntry{
+				Timestamp: time.Now().UnixNano(),
+				Operation: "CREATE_BUCKET",
+				Bucket:    bucket,
+			})
+		}
+	}()
+
 	bucketDir := s.getBucketDir(bucket)
-	if _, err := s.readBucketMeta(bucket); err == nil {
+	if _, err2 := s.readBucketMeta(bucket); err2 == nil {
 		return ErrBucketExists
 	}
 
@@ -124,9 +134,19 @@ func (s *LocalStore) CreateBucket(ctx context.Context, bucket string) error {
 	return s.writeBucketMeta(bucket, &meta)
 }
 
-func (s *LocalStore) DeleteBucket(ctx context.Context, bucket string) error {
+func (s *LocalStore) DeleteBucket(ctx context.Context, bucket string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	defer func() {
+		if err == nil && ctx.Value("is_restore") == nil {
+			_ = s.writeWAL(WALEntry{
+				Timestamp: time.Now().UnixNano(),
+				Operation: "DELETE_BUCKET",
+				Bucket:    bucket,
+			})
+		}
+	}()
 
 	if _, err := s.readBucketMeta(bucket); err != nil {
 		return err
@@ -329,6 +349,26 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	plaintext, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if err == nil && ctx.Value("is_restore") == nil && ov != nil {
+			_ = s.writeWAL(WALEntry{
+				Timestamp:   time.Now().UnixNano(),
+				Operation:   "PUT_OBJECT",
+				Bucket:      bucket,
+				Key:         key,
+				VersionID:   ov.VersionID,
+				ContentType: contentType,
+				Size:        ov.Size,
+				Data:        plaintext,
+			})
+		}
+	}()
+
 	b, err := s.readBucketMeta(bucket)
 	if err != nil {
 		return nil, err
@@ -357,11 +397,6 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 	}
 
 	hasher := md5.New()
-	// Read all data first so we can encrypt before writing
-	plaintext, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
 	written := int64(len(plaintext))
 	if size > 0 && written != size {
 		return nil, fmt.Errorf("size mismatch: expected %d, got %d", size, written)
@@ -795,9 +830,21 @@ func (s *LocalStore) HeadObject(ctx context.Context, bucket, key, versionID stri
 	return targetVer, nil
 }
 
-func (s *LocalStore) DeleteObject(ctx context.Context, bucket, key, versionID string) (*ObjectVersion, error) {
+func (s *LocalStore) DeleteObject(ctx context.Context, bucket, key, versionID string) (ov *ObjectVersion, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	defer func() {
+		if err == nil && ctx.Value("is_restore") == nil && ov != nil {
+			_ = s.writeWAL(WALEntry{
+				Timestamp: time.Now().UnixNano(),
+				Operation: "DELETE_OBJECT",
+				Bucket:    bucket,
+				Key:       key,
+				VersionID: versionID,
+			})
+		}
+	}()
 
 	b, err := s.readBucketMeta(bucket)
 	if err != nil {
@@ -1989,9 +2036,22 @@ func (s *LocalStore) RunColdSweep(ctx context.Context) (int, []error) {
 	return mgr.RunSweep(ctx)
 }
 
-func (s *LocalStore) PutObjectTagging(ctx context.Context, bucket, key, versionID string, tags map[string]string) (*ObjectVersion, error) {
+func (s *LocalStore) PutObjectTagging(ctx context.Context, bucket, key, versionID string, tags map[string]string) (ov *ObjectVersion, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	defer func() {
+		if err == nil && ctx.Value("is_restore") == nil && ov != nil {
+			_ = s.writeWAL(WALEntry{
+				Timestamp: time.Now().UnixNano(),
+				Operation: "PUT_TAGS",
+				Bucket:    bucket,
+				Key:       key,
+				VersionID: versionID,
+				Tags:      tags,
+			})
+		}
+	}()
 
 	om, err := s.readObjectMeta(bucket, key)
 	if err != nil {
@@ -2061,9 +2121,21 @@ func (s *LocalStore) GetObjectTagging(ctx context.Context, bucket, key, versionI
 	return targetVer.Tags, nil
 }
 
-func (s *LocalStore) DeleteObjectTagging(ctx context.Context, bucket, key, versionID string) (*ObjectVersion, error) {
+func (s *LocalStore) DeleteObjectTagging(ctx context.Context, bucket, key, versionID string) (ov *ObjectVersion, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	defer func() {
+		if err == nil && ctx.Value("is_restore") == nil && ov != nil {
+			_ = s.writeWAL(WALEntry{
+				Timestamp: time.Now().UnixNano(),
+				Operation: "DELETE_TAGS",
+				Bucket:    bucket,
+				Key:       key,
+				VersionID: versionID,
+			})
+		}
+	}()
 
 	om, err := s.readObjectMeta(bucket, key)
 	if err != nil {
@@ -2202,6 +2274,198 @@ func (s *LocalStore) GetBucketGeoPlacement(ctx context.Context, bucket string) (
 	}
 
 	return b.GeoPlacement, nil
+}
+
+type WALEntry struct {
+	Timestamp   int64             `json:"timestamp"`
+	Operation   string            `json:"operation"`
+	Bucket      string            `json:"bucket"`
+	Key         string            `json:"key,omitempty"`
+	VersionID   string            `json:"version_id,omitempty"`
+	ContentType string            `json:"content_type,omitempty"`
+	Size        int64             `json:"size,omitempty"`
+	Data        []byte            `json:"data,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+}
+
+func (s *LocalStore) writeWAL(entry WALEntry) error {
+	walPath := filepath.Join(s.rootDir, "backup.wal")
+	f, err := os.OpenFile(walPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write(append(data, '\n'))
+	return err
+}
+
+func (s *LocalStore) RestoreBucketToPointInTime(ctx context.Context, bucket string, targetTime time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	walPath := filepath.Join(s.rootDir, "backup.wal")
+	f, err := os.Open(walPath)
+	if os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var entries []WALEntry
+	dec := json.NewDecoder(f)
+	for {
+		var entry WALEntry
+		if err := dec.Decode(&entry); err == io.EOF {
+			break
+		} else if err != nil {
+			break
+		}
+		entries = append(entries, entry)
+	}
+
+	targetNano := targetTime.UnixNano()
+
+	// Clear local bucket files & metadata for clean replay
+	_ = os.RemoveAll(s.getBucketDir(bucket))
+	_ = s.pebbleDB.Delete([]byte("b:"+bucket), pebble.Sync)
+	
+	prefix := []byte("o:" + bucket + ":")
+	iter, err := s.pebbleDB.NewIter(&pebble.IterOptions{LowerBound: prefix})
+	if err == nil {
+		var keysToDelete [][]byte
+		for iter.First(); iter.Valid() && bytes.HasPrefix(iter.Key(), prefix); iter.Next() {
+			keysToDelete = append(keysToDelete, append([]byte(nil), iter.Key()...))
+		}
+		iter.Close()
+		for _, k := range keysToDelete {
+			_ = s.pebbleDB.Delete(k, pebble.Sync)
+		}
+	}
+
+	delete(s.hnswIndices, bucket)
+
+	for _, entry := range entries {
+		if entry.Bucket != bucket {
+			continue
+		}
+		if entry.Timestamp > targetNano {
+			break
+		}
+
+		switch entry.Operation {
+		case "CREATE_BUCKET":
+			bucketDir := s.getBucketDir(entry.Bucket)
+			_ = os.MkdirAll(filepath.Join(bucketDir, ".data"), 0755)
+			meta := Bucket{
+				Name:        entry.Bucket,
+				CreatedTime: time.Unix(0, entry.Timestamp),
+				Versioning:  "Enabled",
+			}
+			_ = s.writeBucketMeta(entry.Bucket, &meta)
+
+		case "DELETE_BUCKET":
+			bucketDir := s.getBucketDir(entry.Bucket)
+			_ = os.RemoveAll(bucketDir)
+			_ = s.pebbleDB.Delete([]byte("b:"+entry.Bucket), pebble.Sync)
+
+		case "PUT_OBJECT":
+			dataPath := s.getObjectDataPath(entry.Bucket, entry.Key, entry.VersionID)
+			_ = os.MkdirAll(filepath.Dir(dataPath), 0755)
+			_ = os.WriteFile(dataPath, entry.Data, 0666)
+
+			om, err := s.readObjectMeta(entry.Bucket, entry.Key)
+			if err != nil {
+				om = &ObjectMeta{Key: entry.Key, Versions: []ObjectVersion{}}
+			}
+			newVer := ObjectVersion{
+				VersionID:    entry.VersionID,
+				Key:          entry.Key,
+				Size:         entry.Size,
+				LastModified: time.Unix(0, entry.Timestamp),
+				ContentType:  entry.ContentType,
+				IsLatest:     true,
+			}
+			for i := range om.Versions {
+				om.Versions[i].IsLatest = false
+			}
+			om.Versions = append([]ObjectVersion{newVer}, om.Versions...)
+			_ = s.writeObjectMeta(entry.Bucket, entry.Key, om)
+
+		case "DELETE_OBJECT":
+			if entry.VersionID != "" {
+				om, err := s.readObjectMeta(entry.Bucket, entry.Key)
+				if err == nil {
+					foundIndex := -1
+					for i, ver := range om.Versions {
+						if ver.VersionID == entry.VersionID {
+							foundIndex = i
+							break
+						}
+					}
+					if foundIndex != -1 {
+						dataPath := s.getObjectDataPath(entry.Bucket, entry.Key, entry.VersionID)
+						_ = os.Remove(dataPath)
+						om.Versions = append(om.Versions[:foundIndex], om.Versions[foundIndex+1:]...)
+						if len(om.Versions) == 0 {
+							_ = s.pebbleDB.Delete([]byte("o:"+entry.Bucket+":"+entry.Key), pebble.Sync)
+						} else {
+							om.Versions[0].IsLatest = true
+							_ = s.writeObjectMeta(entry.Bucket, entry.Key, om)
+						}
+					}
+				}
+			} else {
+				om, err := s.readObjectMeta(entry.Bucket, entry.Key)
+				if err == nil {
+					for i := range om.Versions {
+						om.Versions[i].IsLatest = false
+					}
+					delMarker := ObjectVersion{
+						VersionID:      generateUUID(),
+						Key:            entry.Key,
+						Size:           0,
+						LastModified:   time.Unix(0, entry.Timestamp),
+						IsLatest:       true,
+						IsDeleteMarker: true,
+					}
+					om.Versions = append([]ObjectVersion{delMarker}, om.Versions...)
+					_ = s.writeObjectMeta(entry.Bucket, entry.Key, om)
+				}
+			}
+
+		case "PUT_TAGS":
+			om, err := s.readObjectMeta(entry.Bucket, entry.Key)
+			if err == nil {
+				for i := range om.Versions {
+					if (entry.VersionID == "" && om.Versions[i].IsLatest) || (entry.VersionID != "" && om.Versions[i].VersionID == entry.VersionID) {
+						om.Versions[i].Tags = entry.Tags
+						break
+					}
+				}
+				_ = s.writeObjectMeta(entry.Bucket, entry.Key, om)
+			}
+
+		case "DELETE_TAGS":
+			om, err := s.readObjectMeta(entry.Bucket, entry.Key)
+			if err == nil {
+				for i := range om.Versions {
+					if (entry.VersionID == "" && om.Versions[i].IsLatest) || (entry.VersionID != "" && om.Versions[i].VersionID == entry.VersionID) {
+						om.Versions[i].Tags = nil
+						break
+					}
+				}
+				_ = s.writeObjectMeta(entry.Bucket, entry.Key, om)
+			}
+		}
+	}
+	return nil
 }
 
 

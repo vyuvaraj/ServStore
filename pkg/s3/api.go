@@ -146,6 +146,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.handleConsoleSession(w, r)
 		return
 	}
+	if r.URL.Path == "/admin/backup/restore" && r.Method == http.MethodPost {
+		g.handleBackupRestore(w, r)
+		return
+	}
 
 	// Update HTTP metrics
 	metrics.IncInFlight()
@@ -726,6 +730,31 @@ func (g *Gateway) handleGetBucketGeoPlacement(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+func (g *Gateway) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	bucket := r.URL.Query().Get("bucket")
+	timeStr := r.URL.Query().Get("time")
+
+	if bucket == "" || timeStr == "" {
+		g.writeErrorCtx(w, r, http.StatusBadRequest, "InvalidArgument", "bucket and time query parameters are required")
+		return
+	}
+
+	targetTime, err := time.Parse(time.RFC3339Nano, timeStr)
+	if err != nil {
+		g.writeErrorCtx(w, r, http.StatusBadRequest, "InvalidArgument", "time parameter must be RFC3339 format")
+		return
+	}
+
+	err = g.store.RestoreBucketToPointInTime(r.Context(), bucket, targetTime)
+	if err != nil {
+		g.writeErrorCtx(w, r, http.StatusInternalServerError, "InternalError", "Failed to restore bucket: "+err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("Bucket restored successfully to " + timeStr))
 }
 
 func (g *Gateway) handleConsoleLogin(w http.ResponseWriter, r *http.Request) {
