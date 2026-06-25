@@ -51,6 +51,7 @@ type Gateway struct {
 	sessionMutex           sync.RWMutex
 	federationRules        []FederationRule
 	fedMutex               sync.RWMutex
+	batchMgr               *BatchJobManager
 }
 
 type FederationRule struct {
@@ -108,6 +109,7 @@ func NewGateway(store storage.StorageEngine, auth *auth.AuthProvider, raftNode *
 		parityShards:      parityShards,
 		consoleSessionMap: make(map[string]storage.ConsoleSession),
 		federationRules:   rules,
+		batchMgr:          NewBatchJobManager(store),
 	}
 }
 
@@ -177,6 +179,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/admin/federation" && r.Method == http.MethodPost {
 		g.handleRegisterFederation(w, r)
+		return
+	}
+	if r.URL.Path == "/admin/batch" && r.Method == http.MethodPost {
+		g.handleCreateBatchJob(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/admin/batch/") && r.Method == http.MethodGet {
+		g.handleGetBatchJob(w, r)
 		return
 	}
 

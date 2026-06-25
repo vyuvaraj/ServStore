@@ -139,7 +139,7 @@ These items take ServStore from a production-ready S3-compatible engine to a **c
 | 9.8 | **Server-side copy** | Small | `PUT /dest-bucket/key` with `x-amz-copy-source` header — copy objects between buckets without downloading. Required S3 compatibility gap. | [x] |
 | 9.9 | **Bucket metrics & quota** | Medium | Per-bucket storage quota enforcement. Dashboard metrics: total size, object count, request rate, bandwidth, and growth trend. Alerts when approaching quota. | [x] |
 | 9.10 | **WASM trigger on object events** | Large | Declare WASM functions that execute automatically on `PutObject` or `DeleteObject` — like AWS Lambda@S3 triggers but inside the storage engine. Zero-latency event processing. | [x] |
-| 9.11 | **S3 batch operations** | Large | `POST /batch` API for bulk copy, delete, tagging, and metadata updates across thousands of objects. Job-based with progress tracking. Enterprise-scale operations. | [ ] |
+| 9.11 | **S3 batch operations** | Large | `POST /batch` API for bulk copy, delete, tagging, and metadata updates across thousands of objects. Job-based with progress tracking. Enterprise-scale operations. | [x] |
 | 9.12 | **Content-type aware compression** | Medium | Automatically compress text, JSON, and log objects with zstd on write; decompress transparently on read. Storage reduction with zero client changes. | [x] |
 | 9.13 | **Multi-user web console** | Medium | Support multiple console users with independent sessions, per-user bucket visibility, and activity history. Currently single-user embedded UI. | [x] |
 | 9.14 | **Federation (cross-cluster namespace)** | Large | Federate multiple ServStore clusters under a single namespace. Global bucket names resolve to the owning cluster transparently — like DNS for objects. | [x] |
