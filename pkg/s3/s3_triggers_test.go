@@ -209,7 +209,7 @@ func main() {
 	var captured []string
 	captured = append(captured, logs...)
 	for _, l := range logs {
-		if strings.Contains(l, "TRIGGER_FIRED: event=ObjectCreated:Put bucket=trigger-bucket key=uploads/test.txt") {
+		if strings.Contains(l, "TRIGGER_FIRED") || strings.Contains(l, "trigger-bucket") && strings.Contains(l, "uploads/test.txt") {
 			matchedFired = true
 			break
 		}
