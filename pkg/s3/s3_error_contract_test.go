@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"servstore/pkg/auth"
 	"servstore/pkg/storage"
@@ -17,7 +18,12 @@ func TestStandardizedErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create local store: %v", err)
 	}
-	defer store.Close()
+	defer func() {
+		// Allow async access-log goroutines to finish before closing the store,
+		// otherwise TempDir cleanup races with background PutObject writes.
+		time.Sleep(50 * time.Millisecond)
+		store.Close()
+	}()
 
 	// Enable Auth to trigger Forbidden (AccessDenied) error
 	authProv := auth.NewAuthProvider("admin", "adminsecret", true)
