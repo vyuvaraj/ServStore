@@ -57,9 +57,18 @@ func TestS3BatchDelete(t *testing.T) {
 	}
 
 	// Verify files are indeed deleted from store
-	_, _, err1 := store.GetObject(ctx, bucket, "file1.txt", "")
-	_, _, err2 := store.GetObject(ctx, bucket, "file2.txt", "")
-	_, _, err3 := store.GetObject(ctx, bucket, "file3.txt", "")
+	rc1, _, err1 := store.GetObject(ctx, bucket, "file1.txt", "")
+	if rc1 != nil {
+		rc1.Close()
+	}
+	rc2, _, err2 := store.GetObject(ctx, bucket, "file2.txt", "")
+	if rc2 != nil {
+		rc2.Close()
+	}
+	rc3, _, err3 := store.GetObject(ctx, bucket, "file3.txt", "")
+	if rc3 != nil {
+		rc3.Close()
+	}
 
 	if err1 == nil {
 		t.Errorf("expected file1.txt to be deleted")
