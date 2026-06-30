@@ -3,8 +3,10 @@ package storage
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"os"
+	"sort"
 	"testing"
 )
 
@@ -120,4 +122,71 @@ func TestHNSWProperties(t *testing.T) {
 			t.Error("expected 'cookies' to be deleted from the index")
 		}
 	}
+}
+
+func BenchmarkHNSWvsLinearSearch(b *testing.B) {
+	// Initialize index
+	idx := NewHNSWIndex()
+
+	// Create 500 random vectors of 128 dimensions
+	numVectors := 500
+	dim := 128
+	keys := make([]string, numVectors)
+	vectors := make([][]float64, numVectors)
+
+	for i := 0; i < numVectors; i++ {
+		keys[i] = fmt.Sprintf("key-%d", i)
+		v := make([]float64, dim)
+		sumSq := 0.0
+		for j := 0; j < dim; j++ {
+			// Generate pseudo-random numbers
+			v[j] = math.Sin(float64(i*dim + j))
+			sumSq += v[j] * v[j]
+		}
+		// Normalize
+		norm := math.Sqrt(sumSq)
+		for j := 0; j < dim; j++ {
+			v[j] /= norm
+		}
+		vectors[i] = v
+		idx.Insert(keys[i], v)
+	}
+
+	// Generate a query vector
+	query := make([]float64, dim)
+	sumSq := 0.0
+	for j := 0; j < dim; j++ {
+		query[j] = math.Cos(float64(j))
+		sumSq += query[j] * query[j]
+	}
+	norm := math.Sqrt(sumSq)
+	for j := 0; j < dim; j++ {
+		query[j] /= norm
+	}
+
+	b.ResetTimer()
+
+	b.Run("HNSW_Search", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = idx.Search(query, 5)
+		}
+	})
+
+	b.Run("Linear_Search_Scan", func(b *testing.B) {
+		type distKey struct {
+			key  string
+			dist float64
+		}
+		for i := 0; i < b.N; i++ {
+			var list []distKey
+			for k := 0; k < numVectors; k++ {
+				dist := CosineDistance(query, vectors[k])
+				list = append(list, distKey{key: keys[k], dist: dist})
+			}
+			sort.Slice(list, func(x, y int) bool {
+				return list[x].dist < list[y].dist
+			})
+			_ = list[:5]
+		}
+	})
 }
