@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"servstore/pkg/auth"
 	"servstore/pkg/storage"
@@ -79,4 +80,7 @@ func TestS3BatchDelete(t *testing.T) {
 	if err3 != nil {
 		t.Errorf("expected file3.txt to still exist, got err: %v", err3)
 	}
+
+	// Allow background asynchronous access log writing goroutines to finish
+	time.Sleep(100 * time.Millisecond)
 }
