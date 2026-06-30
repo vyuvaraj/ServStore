@@ -1,10 +1,12 @@
 package web
 
 import (
+	"bufio"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +35,8 @@ func TestWebSocketUpgradeAndEventPush(t *testing.T) {
 	}
 	defer conn.Close()
 
+	br := bufio.NewReader(conn)
+
 	// Send manual handshake
 	secKey := "dGhlIHNhbXBsZSBub25jZQ=="
 	req := fmt.Sprintf(
@@ -50,13 +54,19 @@ func TestWebSocketUpgradeAndEventPush(t *testing.T) {
 		t.Fatalf("failed to write handshake request: %v", err)
 	}
 
-	// Read handshake response
-	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
-	if err != nil {
-		t.Fatalf("failed to read handshake response: %v", err)
+	// Read handshake response line by line until empty line to avoid consuming websocket frames
+	var respHeader strings.Builder
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("failed to read handshake line: %v", err)
+		}
+		respHeader.WriteString(line)
+		if line == "\r\n" || line == "\n" {
+			break
+		}
 	}
-	resp := string(buf[:n])
+	resp := respHeader.String()
 
 	if !strings.Contains(resp, "101 Switching Protocols") {
 		t.Fatalf("expected 101 Switching Protocols, got: %s", resp)
@@ -73,7 +83,7 @@ func TestWebSocketUpgradeAndEventPush(t *testing.T) {
 	// Helper function to read a text frame
 	readFrame := func() ([]byte, error) {
 		header := make([]byte, 2)
-		_, err := conn.Read(header)
+		_, err := io.ReadFull(br, header)
 		if err != nil {
 			return nil, err
 		}
@@ -84,7 +94,7 @@ func TestWebSocketUpgradeAndEventPush(t *testing.T) {
 		length := int(header[1] & 0x7F)
 		if length == 126 {
 			lenBytes := make([]byte, 2)
-			_, err = conn.Read(lenBytes)
+			_, err = io.ReadFull(br, lenBytes)
 			if err != nil {
 				return nil, err
 			}
@@ -94,7 +104,7 @@ func TestWebSocketUpgradeAndEventPush(t *testing.T) {
 		}
 
 		payload := make([]byte, length)
-		_, err = conn.Read(payload)
+		_, err = io.ReadFull(br, payload)
 		return payload, err
 	}
 
