@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:alpine AS builder
 WORKDIR /src
 COPY . .
 RUN sed -i 's/go 1\.2[5-9]\.[0-9]*/go 1.24/g' go.mod vendor/modules.txt && \
