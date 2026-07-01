@@ -57,6 +57,7 @@ func main() {
 	notificationWebhook := flag.String("notification-webhook", "", "Webhook URL to send event notifications")
 	notificationStompAddr := flag.String("notification-stomp-addr", "", "STOMP broker address for event notifications (e.g., localhost:61613)")
 	notificationStompTopic := flag.String("notification-stomp-topic", "/topic/bucket-events", "STOMP topic name for event notifications")
+	mock := flag.Bool("mock", false, "Enable offline S3 API mock responses for local testing")
 	flag.Parse()
 
 	// Initialize OpenTelemetry Tracing (inspired by serv-lang)
@@ -156,7 +157,7 @@ func main() {
 	}
 
 	// Create S3 Gateway
-	gateway := s3.NewGateway(store, authProvider, raftNode, clusterMgr, *replicationFactor, *erasureCoding, *dataShards, *parityShards)
+	gateway := s3.NewGateway(store, authProvider, raftNode, clusterMgr, *replicationFactor, *erasureCoding, *dataShards, *parityShards).WithMock(*mock || os.Getenv("SERVSTORE_MOCK") == "true")
 
 	if *notificationWebhook != "" {
 		gateway.WithNotificationWebhook(*notificationWebhook)

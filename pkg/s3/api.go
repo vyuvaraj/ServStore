@@ -52,6 +52,12 @@ type Gateway struct {
 	federationRules        []FederationRule
 	fedMutex               sync.RWMutex
 	batchMgr               *BatchJobManager
+	mock                   bool
+}
+
+func (g *Gateway) WithMock(mock bool) *Gateway {
+	g.mock = mock
+	return g
 }
 
 type FederationRule struct {
@@ -153,7 +159,109 @@ func (trw *trackingResponseWriter) WriteHeader(code int) {
 	trw.ResponseWriter.WriteHeader(code)
 }
 
+func (g *Gateway) handleMockS3(w http.ResponseWriter, r *http.Request) {
+	// CORS Headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Amz-Date, X-Amz-Content-Sha256, Content-Length")
+	w.Header().Set("Access-Control-Expose-Headers", "ETag, x-amz-version-id, x-amz-delete-marker")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	path := r.URL.Path
+	bucket, key := parsePath(path)
+
+	// 1. GET / (List All Buckets)
+	if bucket == "" && r.Method == http.MethodGet {
+		res := ListAllMyBucketsResult{
+			Xmlns: xmlNamespace,
+			Buckets: []BucketResult{
+				{Name: "mock-bucket-1", CreationDate: time.Now().Format(time.RFC3339)},
+				{Name: "mock-bucket-2", CreationDate: time.Now().Format(time.RFC3339)},
+			},
+			Owner: OwnerResult{ID: "mock-owner-id", DisplayName: "mock-owner"},
+		}
+		g.writeXML(w, http.StatusOK, res)
+		return
+	}
+
+	// 2. PUT /<bucket> (Create Bucket)
+	if bucket != "" && key == "" && r.Method == http.MethodPut {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// 3. DELETE /<bucket> (Delete Bucket)
+	if bucket != "" && key == "" && r.Method == http.MethodDelete {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// 4. GET /<bucket> (List Objects in Bucket)
+	if bucket != "" && key == "" && r.Method == http.MethodGet {
+		res := ListBucketResult{
+			Xmlns:       xmlNamespace,
+			Name:        bucket,
+			MaxKeys:     1000,
+			IsTruncated: false,
+			Contents: []ObjectResult{
+				{
+					Key:          "mock-object-1.txt",
+					LastModified: time.Now().Format(time.RFC3339),
+					ETag:         `"mock-etag-1"`,
+					Size:         100,
+					StorageClass: "STANDARD",
+					Owner:        OwnerResult{ID: "mock-owner-id", DisplayName: "mock-owner"},
+				},
+			},
+		}
+		g.writeXML(w, http.StatusOK, res)
+		return
+	}
+
+	// 5. GET /<bucket>/<key> (Get Object)
+	if bucket != "" && key != "" && r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("ETag", `"mock-etag"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("mock-s3-data"))
+		return
+	}
+
+	// 6. PUT /<bucket>/<key> (Put Object)
+	if bucket != "" && key != "" && r.Method == http.MethodPut {
+		w.Header().Set("ETag", `"mock-etag"`)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// 7. DELETE /<bucket>/<key> (Delete Object)
+	if bucket != "" && key != "" && r.Method == http.MethodDelete {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// 8. HEAD /<bucket>/<key> (Head Object)
+	if bucket != "" && key != "" && r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("ETag", `"mock-etag"`)
+		w.Header().Set("Content-Length", "12")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if g.mock {
+		g.handleMockS3(w, r)
+		return
+	}
+
 	// Intercept Prometheus metrics endpoint
 	if r.URL.Path == "/metrics" && r.Method == http.MethodGet {
 		metrics.Handler().ServeHTTP(w, r)
