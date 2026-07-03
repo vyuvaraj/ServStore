@@ -57,6 +57,10 @@ func (wc *WebConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ServShared.HealthzHandler(w, r)
 		return
 	}
+	if path == "/api/version" {
+		ServShared.VersionHandler("servstore", "1.0.0")(w, r)
+		return
+	}
 	if path == "/readyz" {
 		ServShared.ReadyzHandler(w, r)
 		return
