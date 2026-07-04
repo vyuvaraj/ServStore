@@ -1,3 +1,5 @@
+//go:build enterprise
+
 // Package storage cold_tier.go — Hybrid Cloud Cold-Storage Tiering
 //
 // ColdTierManager asynchronously archives "cold" CAS data blocks to any
