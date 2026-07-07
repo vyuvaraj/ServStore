@@ -4,12 +4,6 @@ package storage
 
 import "fmt"
 
-// ColdTierConfig is a no-op stub in OSS (cold storage tiering requires Enterprise Edition).
-type ColdTierConfig struct{}
-
-// ColdTierManager is a no-op stub in OSS.
-type ColdTierManager struct{}
-
 // NewColdTierManager returns nil in OSS (feature disabled).
 func NewColdTierManager(_ *ColdTierConfig, _ *LocalStore) *ColdTierManager {
 	return nil
@@ -26,10 +20,7 @@ func (c *ColdTierManager) FetchBack(_ interface{}, _ string) error {
 	return fmt.Errorf("cold tier re-hydration requires Enterprise Edition")
 }
 
-// stubPath returns the .cold stub path (single arg: data file path).
-func stubPath(dataPath string) string {
-	return dataPath + ".cold"
-}
+
 
 // GetColdTierConfig returns empty config and false in OSS (cold tier not available).
 func (s *LocalStore) GetColdTierConfig() (ColdTierConfig, bool) {
