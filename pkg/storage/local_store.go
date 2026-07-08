@@ -523,6 +523,7 @@ func (s *LocalStore) PutObject(ctx context.Context, bucket, key string, reader i
 		IsLatest:       true,
 		IsDeleteMarker: false,
 		Checksum:       b3Checksum,
+		Tags:           AutoClassify(key, contentType, plaintext),
 		Compressed:     isCompressed,
 	}
 
@@ -1419,6 +1420,7 @@ func (s *LocalStore) CompleteMultipartUpload(ctx context.Context, bucket, key, u
 		IsLatest:       true,
 		IsDeleteMarker: false,
 		Checksum:       ParallelBlake3Hash(assembledPlaintext),
+		Tags:           AutoClassify(key, contentType, assembledPlaintext),
 		Compressed:     isCompressed,
 	}
 
