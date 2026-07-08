@@ -5,7 +5,7 @@ package s3
 import "net/http"
 
 // resolveFederatedBucket in OSS: federation disabled, always returns false.
-func (g *Gateway) resolveFederatedBucket(bucket string) (string, bool) {
+func (g *Gateway) resolveFederatedBucket(_ string) (string, bool) {
 	return "", false
 }
 
