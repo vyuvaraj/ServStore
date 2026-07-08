@@ -1541,6 +1541,7 @@ func (g *Gateway) handleGetObject(w http.ResponseWriter, r *http.Request, bucket
 	w.Header().Set("Content-Length", strconv.FormatInt(obj.Size, 10))
 	w.Header().Set("Content-Type", obj.ContentType)
 	w.Header().Set("ETag", `"`+obj.ETag+`"`)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	if obj.VersionID != "" && obj.VersionID != "null" {
 		w.Header().Set("x-amz-version-id", obj.VersionID)
 	}
@@ -2334,6 +2335,7 @@ func (g *Gateway) handleGetObjectErasure(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Content-Length", strconv.FormatInt(originalSize, 10))
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", `"`+finalETag+`"`)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	if versionID != "" && versionID != "null" {
 		w.Header().Set("x-amz-version-id", versionID)
 	}
