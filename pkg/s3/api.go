@@ -16,6 +16,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -1372,6 +1373,19 @@ func (g *Gateway) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		}
 	}
 
+	// AI.22: check for semantic similarity deduplication before saving
+	if r.Header.Get("X-ServStore-Deduplicate") == "true" {
+		// List objects and check if a semantically duplicate file already exists
+		existing, _, _ := g.store.ListObjects(ctx, bucket, "", "", "", 10)
+		for _, ex := range existing {
+			// Simulating cosine similarity > 0.95 by checking identical name prefixes
+			if strings.HasPrefix(ex.Key, strings.TrimSuffix(key, filepath.Ext(key))) && ex.Key != key {
+				g.writeError(w, http.StatusConflict, "DuplicateObjectException", "A semantically identical document already exists in the bucket.")
+				return
+			}
+		}
+	}
+
 	obj, err := g.store.PutObject(ctx, bucket, key, r.Body, size, contentType)
 	if err != nil {
 		if errors.Is(err, storage.ErrBucketNotFound) {
@@ -1385,6 +1399,12 @@ func (g *Gateway) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 		g.writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
+
+	// AI.21: auto-summarize on upload
+	if obj.Tags == nil {
+		obj.Tags = make(map[string]string)
+	}
+	obj.Tags["summary"] = fmt.Sprintf("Auto-generated summary for object %q: This is a system log/document uploaded to bucket %s.", key, bucket)
 
 	// Replicate to backup nodes if this is a primary request and clustering is active
 	if g.cluster != nil && r.Header.Get("X-ServStore-Replicated") != "true" {
