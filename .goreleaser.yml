@@ -1,4 +1,4 @@
-﻿project_name: servstore
+project_name: servstore
 version: 2
 
 before:
@@ -34,7 +34,7 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.buildDate={{.Date}}
 
-  # Kubernetes CSI driver â€” Linux-only (runs as a DaemonSet sidecar)
+  # Kubernetes CSI driver — Linux-only (runs as a DaemonSet sidecar)
   - id: csi-driver
     main: ./cmd/csi-driver
     binary: servstore-csi
@@ -48,7 +48,7 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.buildDate={{.Date}}
 
-  # Kubernetes operator â€” Linux-only
+  # Kubernetes operator — Linux-only
   - id: operator
     main: ./cmd/operator
     binary: servstore-operator
@@ -136,4 +136,4 @@ scoops:
     license: "Apache-2.0"
 
 release:
-  replace_existing: true
+  mode: replace
