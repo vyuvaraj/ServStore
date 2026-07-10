@@ -1,5 +1,9 @@
 # ServStore
 
+```bash
+docker run -p 8081:8081 ghcr.io/vyuvaraj/servstore:latest
+```
+
 [![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/vyuvaraj/ServStore)
