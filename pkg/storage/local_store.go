@@ -57,11 +57,18 @@ func NewLocalStore(rootDir string) (*LocalStore, error) {
 		_ = InitializeONNX(onnxLib, onnxModel, onnxVocab)
 	}
 
-	return &LocalStore{
+	store := &LocalStore{
 		rootDir:     absPath,
 		pebbleDB:    db,
 		hnswIndices: make(map[string]*HNSWIndex),
-	}, nil
+	}
+
+	if err := store.RecoverFromWAL(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to recover from WAL: %w", err)
+	}
+
+	return store, nil
 }
 
 func (s *LocalStore) Close() error {
@@ -2237,34 +2244,6 @@ func (s *LocalStore) GetBucketGeoPlacement(ctx context.Context, bucket string) (
 	return b.GeoPlacement, nil
 }
 
-type WALEntry struct {
-	Timestamp   int64             `json:"timestamp"`
-	Operation   string            `json:"operation"`
-	Bucket      string            `json:"bucket"`
-	Key         string            `json:"key,omitempty"`
-	VersionID   string            `json:"version_id,omitempty"`
-	ContentType string            `json:"content_type,omitempty"`
-	Size        int64             `json:"size,omitempty"`
-	Data        []byte            `json:"data,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-}
-
-func (s *LocalStore) writeWAL(entry WALEntry) error {
-	walPath := filepath.Join(s.rootDir, "backup.wal")
-	f, err := os.OpenFile(walPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-
-	_, err = f.Write(append(data, '\n'))
-	return err
-}
 
 func (s *LocalStore) RestoreBucketToPointInTime(ctx context.Context, bucket string, targetTime time.Time) error {
 	s.mu.Lock()
