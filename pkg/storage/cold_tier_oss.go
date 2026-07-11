@@ -4,6 +4,9 @@ package storage
 
 import "fmt"
 
+// IsIntelligentTieringSupported indicates if Glacier and lifecycle auto-tiering is supported.
+const IsIntelligentTieringSupported = false
+
 // NewColdTierManager returns nil in OSS (feature disabled).
 func NewColdTierManager(_ *ColdTierConfig, _ *LocalStore) *ColdTierManager {
 	return nil
