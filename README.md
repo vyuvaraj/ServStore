@@ -388,6 +388,111 @@ You may obtain a copy of the License at
    aws s3 mb s3://my-bucket --endpoint-url http://localhost:8081
    ```
 
+## S3 Client Compatibility Guide (SA.17)
+
+`ServStore` is compatible with any client or library that supports AWS Signature Version 4. Below are integration guides for the most common S3 tools.
+
+### 1. AWS CLI (`aws-cli`)
+Configure your credentials:
+```bash
+aws configure set aws_access_key_id admin
+aws configure set aws_secret_access_key secret
+aws configure set default.region us-east-1
+```
+Run commands by passing the `--endpoint-url` flag:
+```bash
+# Create a bucket
+aws s3 mb s3://test-bucket --endpoint-url http://localhost:8081
+
+# List buckets
+aws s3 ls --endpoint-url http://localhost:8081
+
+# Upload an object
+aws s3 cp document.txt s3://test-bucket/document.txt --endpoint-url http://localhost:8081
+
+# List objects
+aws s3 ls s3://test-bucket/ --endpoint-url http://localhost:8081
+```
+
+### 2. Python (`boto3`)
+Instantiate the S3 client with your local endpoint:
+```python
+import boto3
+from botocore.client import Config
+
+s3 = boto3.client(
+    's3',
+    endpoint_url='http://localhost:8081',
+    aws_access_key_id='admin',
+    aws_secret_access_key='secret',
+    config=Config(signature_version='s3v4'),
+    region_name='us-east-1'
+)
+
+# Create bucket
+s3.create_bucket(Bucket='my-bucket')
+
+# Upload file
+s3.upload_file('local.txt', 'my-bucket', 'remote.txt')
+
+# Download file
+s3.download_file('my-bucket', 'remote.txt', 'downloaded.txt')
+```
+
+### 3. MinIO Client (`mc`)
+Set up an alias for your local ServStore instance:
+```bash
+mc alias set servstore http://localhost:8081 admin secret
+```
+Now perform standard object operations:
+```bash
+# Create a bucket
+mc mb servstore/my-bucket
+
+# Copy a file
+mc cp local.png servstore/my-bucket/remote.png
+
+# Search / List
+mc ls servstore/my-bucket
+```
+
+### 4. `s3cmd`
+Create or modify your `~/.s3cfg` configuration file:
+```ini
+[default]
+access_key = admin
+secret_key = secret
+host_base = localhost:8081
+host_bucket = %(bucket)s.localhost:8081
+use_https = False
+signature_v4 = True
+```
+Use `s3cmd` normally:
+```bash
+s3cmd mb s3://my-bucket
+s3cmd put file.txt s3://my-bucket/
+s3cmd la
+```
+
+### 5. `rclone`
+Configure an `rclone` remote named `servstore`:
+```bash
+rclone config create servstore s3 \
+    provider Other \
+    env_auth false \
+    access_key_id admin \
+    secret_access_key secret \
+    endpoint http://localhost:8081
+```
+Perform synchronization and directory listing operations:
+```bash
+# List buckets
+rclone lsd servstore:
+
+# Sync local folder
+rclone sync /path/to/local/folder servstore:my-bucket/backup
+```
+
 ---
 
 <p align="center">
