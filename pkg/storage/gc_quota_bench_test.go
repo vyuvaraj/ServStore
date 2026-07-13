@@ -257,7 +257,7 @@ func BenchmarkStoreListObjects(b *testing.B) {
 	}
 	// Populate 200 keys
 	for i := range 200 {
-		data := []byte(fmt.Sprintf("obj-%d", i))
+		data := fmt.Appendf(nil, "obj-%d", i)
 		if _, err := store.PutObject(ctx, "list-bucket", fmt.Sprintf("key-%04d", i), bytes.NewReader(data), int64(len(data)), "text/plain"); err != nil {
 			b.Fatal(err)
 		}

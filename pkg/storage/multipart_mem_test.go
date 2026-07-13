@@ -45,7 +45,7 @@ func TestMultipartMemoryProfile(t *testing.T) {
 
 	parts := make([]PartInfo, numParts)
 	for i := range numParts {
-		partData := bytes.Repeat([]byte(fmt.Sprintf("%d", i%10)), partSize)
+		partData := bytes.Repeat(fmt.Appendf(nil, "%d", i%10), partSize)
 		etag, err := store.UploadPart(ctx, "mp-mem-bucket", "large-object.bin", uploadID, i+1,
 			bytes.NewReader(partData), int64(len(partData)))
 		if err != nil {
