@@ -325,7 +325,7 @@ github.com/tetratelabs/wazero/internal/wasm/binary
 github.com/tetratelabs/wazero/internal/wasmdebug
 github.com/tetratelabs/wazero/internal/wasmruntime
 github.com/tetratelabs/wazero/sys
-# github.com/vyuvaraj/ServShared v0.1.1-0.20260709055203-a69c44124438 => ../ServShared
+# github.com/vyuvaraj/ServShared v1.0.2-0.20260714131806-8f86487bce70
 ## explicit; go 1.26.4
 github.com/vyuvaraj/ServShared
 github.com/vyuvaraj/ServShared/pkg/middleware
@@ -1010,4 +1010,3 @@ sigs.k8s.io/structured-merge-diff/v4/value
 ## explicit; go 1.12
 sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v2
-# github.com/vyuvaraj/ServShared => ../ServShared
