@@ -215,6 +215,9 @@ func (s *LocalStore) ListBuckets(ctx context.Context) ([]Bucket, error) {
 }
 
 func (s *LocalStore) readBucketMeta(bucket string) (*Bucket, error) {
+	if s.pebbleDB == nil {
+		return nil, fmt.Errorf("store is closed")
+	}
 	key := []byte("b:" + bucket)
 	val, closer, err := s.pebbleDB.Get(key)
 	if err != nil {
