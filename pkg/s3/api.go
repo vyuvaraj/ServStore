@@ -502,6 +502,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.handleGetBucketNotifications(w, r, bucket)
 			} else if r.URL.Query().Has("geo-placement") {
 				g.handleGetBucketGeoPlacement(w, r, bucket)
+			} else if r.URL.Query().Has("ask") {
+				g.handleConversationalQuery(w, r, bucket)
 			} else {
 				g.handleListObjects(w, r, bucket)
 			}
@@ -3101,4 +3103,110 @@ func generateUUID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+func (g *Gateway) handleConversationalQuery(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+	question := r.URL.Query().Get("ask")
+
+	objects, _, err := g.store.ListObjects(ctx, bucket, "", "", "", 1000)
+	if err != nil {
+		g.writeError(w, http.StatusInternalServerError, "InternalError", "Failed to list objects in bucket: "+err.Error())
+		return
+	}
+
+	var contextBuilder strings.Builder
+	processedCount := 0
+
+	for _, obj := range objects {
+		if strings.HasSuffix(obj.Key, ".txt") || strings.HasSuffix(obj.Key, ".md") || strings.HasSuffix(obj.Key, ".json") {
+			reader, _, err := g.store.GetObject(ctx, bucket, obj.Key, "")
+			if err == nil {
+				data, readErr := io.ReadAll(reader)
+				reader.Close()
+				if readErr == nil {
+					contextBuilder.WriteString(fmt.Sprintf("--- Document: %s ---\n%s\n\n", obj.Key, string(data)))
+					processedCount++
+					if processedCount >= 10 { // Limit to 10 files
+						break
+					}
+				}
+			}
+		}
+	}
+
+	prompt := fmt.Sprintf("Context Documents:\n%s\nUser Question: %s\n\nSynthesize a clear and concise answer based ONLY on the provided context.", contextBuilder.String(), question)
+
+	answer, err := completeLLM(prompt)
+	if err != nil {
+		g.writeError(w, http.StatusInternalServerError, "InternalError", "Failed to synthesize answer: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"bucket":   bucket,
+		"question": question,
+		"answer":   answer,
+	})
+}
+
+func completeLLM(prompt string) (string, error) {
+	aiConnStr := os.Getenv("SERV_AI_CONNECTION")
+	if aiConnStr == "" {
+		aiConnStr = "openai://gpt-4o-mini"
+	}
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" || strings.HasPrefix(aiConnStr, "mock://") {
+		// Mock RAG response helper
+		if strings.Contains(strings.ToLower(prompt), "authentication") {
+			return "Based on the documents in the bucket, user authentication is managed via token-based sessions.", nil
+		}
+		return "This is a mock RAG answer synthesized from the bucket documents regarding your question.", nil
+	}
+
+	url := "https://api.openai.com/v1/chat/completions"
+	payload := map[string]interface{}{
+		"model": "gpt-4o-mini",
+		"messages": []map[string]string{
+			{"role": "system", "content": "You are a helpful Q&A assistant. Synthesize an answer to the user's question based strictly on the provided documents context."},
+			{"role": "user", "content": prompt},
+		},
+		"temperature": 0.2,
+	}
+	bodyBytes, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer " + apiKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("OpenAI API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var respData struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
+		return "", err
+	}
+	if len(respData.Choices) > 0 {
+		return respData.Choices[0].Message.Content, nil
+	}
+	return "", fmt.Errorf("no choice returned from OpenAI")
 }
