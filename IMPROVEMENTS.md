@@ -90,20 +90,20 @@ Generated Go has `// .srv line N` comments but no DWARF mapping or source maps. 
 
 ## Improvement Plan
 
-| Priority | Improvement | Effort | Impact |
-|----------|-------------|--------|--------|
-| **High** | Build a real symbol table with type environments | Large | Catches bugs at compile time |
-| **High** | Fix `go 1.26.3` → actual Go version | Trivial | Prevents toolchain breakage |
-| **High** | Run all examples + stdlib as CI test targets | Small | Prevents regressions |
-| **High** | Add Go-level unit tests for lexer/parser/codegen | Medium | Confidence in compiler correctness |
-| **Medium** | Replace REPL with AST interpreter | Medium | Sub-second interactive eval |
-| **Medium** | Use `fsnotify` for watch mode | Small | Better DX, less CPU waste |
-| **Medium** | Fix `?` operator to propagate error values | Small | Correct error handling semantics |
-| **Medium** | Fix variable scope leaks in codegen | Small | Correct Go output |
-| **Low** | Source maps for debugger integration | Large | Production debugging |
-| **Low** | Build a real package registry (or Git URLs) | Medium | Ecosystem growth |
-| **Low** | LSP completion/hover using symbol table | Medium | Editor integration |
-| **Low** | Remove `_ = x` noise from generated code | Small | Cleaner output |
+| Priority | Improvement | Status | Effort | Impact |
+|----------|-------------|--------|--------|--------|
+| **High** | Build a real symbol table with type environments | Pending | Large | Catches bugs at compile time |
+| **High** | Fix `go 1.26.3` → actual Go version | **Done** | Trivial | Prevents toolchain breakage |
+| **High** | Run all examples + stdlib as CI test targets | **Done** | Small | Prevents regressions |
+| **High** | Add Go-level unit tests for lexer/parser/codegen | **Done** | Medium | Confidence in compiler correctness |
+| **Medium** | Replace REPL with AST interpreter | Pending | Medium | Sub-second interactive eval |
+| **Medium** | Use `fsnotify` for watch mode | **Done** | Small | Better DX, less CPU waste |
+| **Medium** | Fix `?` operator to propagate error values | **Done** | Small | Correct error handling semantics |
+| **Medium** | Fix variable scope leaks in codegen | **Done** | Small | Correct Go output |
+| **Low** | Source maps for debugger integration | Pending | Large | Production debugging |
+| **Low** | Build a real package registry (or Git URLs) | **Done (Git Fallback)** | Medium | Ecosystem growth |
+| **Low** | LSP completion/hover using symbol table | Pending | Medium | Editor integration |
+| **Low** | Remove `_ = x` noise from generated code | Pending | Small | Cleaner output |
 
 ---
 
