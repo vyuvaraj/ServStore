@@ -92,7 +92,7 @@ Generated Go has `// .srv line N` comments but no DWARF mapping or source maps. 
 
 | Priority | Improvement | Status | Effort | Impact |
 |----------|-------------|--------|--------|--------|
-| **High** | Build a real symbol table with type environments | **Done (Scope & Type Flow)** | Large | Catches bugs at compile time |
+| **High** | Build a real symbol table with type environments | **Done** | Large | Catches bugs at compile time |
 | **High** | Fix `go 1.26.3` → actual Go version | **Done** | Trivial | Prevents toolchain breakage |
 | **High** | Run all examples + stdlib as CI test targets | **Done** | Small | Prevents regressions |
 | **High** | Add Go-level unit tests for lexer/parser/codegen | **Done** | Medium | Confidence in compiler correctness |
