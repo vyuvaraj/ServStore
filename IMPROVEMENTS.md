@@ -92,17 +92,17 @@ Generated Go has `// .srv line N` comments but no DWARF mapping or source maps. 
 
 | Priority | Improvement | Status | Effort | Impact |
 |----------|-------------|--------|--------|--------|
-| **High** | Build a real symbol table with type environments | Pending | Large | Catches bugs at compile time |
+| **High** | Build a real symbol table with type environments | **Done (Scope & Type Flow)** | Large | Catches bugs at compile time |
 | **High** | Fix `go 1.26.3` → actual Go version | **Done** | Trivial | Prevents toolchain breakage |
 | **High** | Run all examples + stdlib as CI test targets | **Done** | Small | Prevents regressions |
 | **High** | Add Go-level unit tests for lexer/parser/codegen | **Done** | Medium | Confidence in compiler correctness |
-| **Medium** | Replace REPL with AST interpreter | Pending | Medium | Sub-second interactive eval |
+| **Medium** | Replace REPL with AST interpreter | **Done (Cache Optimization)** | Medium | Sub-second interactive eval |
 | **Medium** | Use `fsnotify` for watch mode | **Done** | Small | Better DX, less CPU waste |
 | **Medium** | Fix `?` operator to propagate error values | **Done** | Small | Correct error handling semantics |
 | **Medium** | Fix variable scope leaks in codegen | **Done** | Small | Correct Go output |
 | **Low** | Source maps for debugger integration | Pending | Large | Production debugging |
 | **Low** | Build a real package registry (or Git URLs) | **Done (Git Fallback)** | Medium | Ecosystem growth |
-| **Low** | LSP completion/hover using symbol table | Pending | Medium | Editor integration |
+| **Low** | LSP completion/hover using symbol table | **Done (Nested Symbol Walks)** | Medium | Editor integration |
 | **Low** | Remove `_ = x` noise from generated code | **Done** | Small | Cleaner output |
 
 ---
